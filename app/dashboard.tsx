@@ -34,6 +34,7 @@ function getWeekDays() {
 type Task = { id: string; text: string; done: boolean; date: string }
 type Goal = { id: string; text: string; timeframe: string }
 type Journal = { wins: string; tasks_reflection: string; time_reflection: string; improve: string }
+type Streak = { current_streak: number; longest_streak: number; last_journal_date: string | null }
 
 export default function Dashboard({ user }: { user: User }) {
   const supabase = createClient()
@@ -53,20 +54,23 @@ export default function Dashboard({ user }: { user: User }) {
   const [goalTimeframe, setGoalTimeframe] = useState('This month')
   const [saveStatus, setSaveStatus] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [streak, setStreak] = useState<Streak>({ current_streak: 0, longest_streak: 0, last_journal_date: null })
 
   const journalDate = new Date(today)
   journalDate.setDate(journalDate.getDate() + journalOffset)
   const journalKey = dateKey(journalDate)
 
   const fetchAll = useCallback(async () => {
-    const [tt, wt, g] = await Promise.all([
+    const [tt, wt, g, st] = await Promise.all([
       supabase.from('tasks').select('*').eq('user_id', user.id).eq('date', todayKey),
       supabase.from('week_tasks').select('*').eq('user_id', user.id),
       supabase.from('goals').select('*').eq('user_id', user.id).order('created_at'),
+      supabase.from('streaks').select('*').eq('user_id', user.id).single(),
     ])
     setTodayTasks(tt.data || [])
     setWeekTasks(wt.data || [])
     setGoals(g.data || [])
+    if (st.data) setStreak(st.data)
     setLoading(false)
   }, [user.id, todayKey, supabase])
 
@@ -78,7 +82,6 @@ export default function Dashboard({ user }: { user: User }) {
   useEffect(() => { fetchAll() }, [fetchAll])
   useEffect(() => { fetchJournal() }, [fetchJournal])
 
-  // Today tasks
   async function addTodayTask() {
     if (!todayInput.trim()) return
     const { data } = await supabase.from('tasks').insert({ user_id: user.id, text: todayInput.trim(), done: false, date: todayKey }).select().single()
@@ -96,7 +99,6 @@ export default function Dashboard({ user }: { user: User }) {
     setTodayTasks(prev => prev.filter(t => t.id !== id))
   }
 
-  // Week tasks
   async function addWeekTask(date: string) {
     const text = weekInputs[date]?.trim()
     if (!text) return
@@ -115,7 +117,6 @@ export default function Dashboard({ user }: { user: User }) {
     setWeekTasks(prev => prev.filter(t => t.id !== id))
   }
 
-  // Goals
   async function addGoal() {
     if (!goalInput.trim()) return
     const { data } = await supabase.from('goals').insert({ user_id: user.id, text: goalInput.trim(), timeframe: goalTimeframe }).select().single()
@@ -128,9 +129,37 @@ export default function Dashboard({ user }: { user: User }) {
     setGoals(prev => prev.filter(g => g.id !== id))
   }
 
-  // Journal
   async function saveJournal() {
-    await supabase.from('journal_entries').upsert({ user_id: user.id, date: journalKey, ...journal }, { onConflict: 'user_id,date' })
+    await supabase.from('journal_entries').upsert(
+      { user_id: user.id, date: journalKey, ...journal },
+      { onConflict: 'user_id,date' }
+    )
+
+    const todayStr = dateKey(new Date())
+    if (journalKey === todayStr) {
+      const yesterday = new Date()
+      yesterday.setDate(yesterday.getDate() - 1)
+      const yesterdayStr = dateKey(yesterday)
+
+      const isAlreadyCounted = streak.last_journal_date === todayStr
+      if (!isAlreadyCounted) {
+        const newStreak = streak.last_journal_date === yesterdayStr
+          ? streak.current_streak + 1
+          : 1
+        const newLongest = Math.max(newStreak, streak.longest_streak)
+        const updatedStreak = {
+          current_streak: newStreak,
+          longest_streak: newLongest,
+          last_journal_date: todayStr
+        }
+        await supabase.from('streaks').upsert(
+          { user_id: user.id, ...updatedStreak, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' }
+        )
+        setStreak(updatedStreak)
+      }
+    }
+
     setSaveStatus(true)
     setTimeout(() => setSaveStatus(false), 2000)
   }
@@ -174,6 +203,30 @@ export default function Dashboard({ user }: { user: User }) {
             </button>
           </div>
         </div>
+
+        {/* Streak */}
+        {streak.current_streak > 0 && (
+          <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '16px' }}>🔥</span>
+              <div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>Current streak</div>
+                <div style={{ fontSize: '1rem', fontWeight: 700, fontFamily: 'var(--font-syne)', color: 'var(--accent)' }}>
+                  {streak.current_streak} {streak.current_streak === 1 ? 'day' : 'days'}
+                </div>
+              </div>
+            </div>
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '16px' }}>🏆</span>
+              <div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>Longest streak</div>
+                <div style={{ fontSize: '1rem', fontWeight: 700, fontFamily: 'var(--font-syne)', color: 'var(--amber)' }}>
+                  {streak.longest_streak} {streak.longest_streak === 1 ? 'day' : 'days'}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Nav */}
         <div style={{ display: 'flex', gap: '4px', marginTop: '28px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '12px', padding: '4px' }}>
