@@ -56,7 +56,7 @@ function sortByPriority<T extends { priority: string }>(items: T[]): T[] {
   return [...items].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority])
 }
 
-type Task = { id: string; text: string; done: boolean; date: string; priority: string }
+type Task = { id: string; text: string; done: boolean; date: string; priority: string; goal_id: string | null }
 type Goal = { id: string; text: string; timeframe: string; priority: string; completed: boolean; completed_at: string | null }
 type Journal = { wins: string; tasks_reflection: string; time_reflection: string; improve: string; quick_entry: string }
 type WeeklyReview = { went_well: string; didnt_go_well: string; focus_next_week: string }
@@ -89,6 +89,21 @@ function PrioritySelect({ value, onChange }: { value: string; onChange: (v: stri
   )
 }
 
+function GoalSelect({ value, onChange, goals }: { value: string; onChange: (v: string) => void; goals: Goal[] }) {
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} style={{
+      background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '8px',
+      padding: '8px 10px', color: 'var(--text2)', fontSize: '0.82rem',
+      outline: 'none', cursor: 'pointer', maxWidth: '160px'
+    }}>
+      <option value="">No goal</option>
+      {goals.map(g => (
+        <option key={g.id} value={g.id}>{g.text.length > 24 ? g.text.slice(0, 24) + '…' : g.text}</option>
+      ))}
+    </select>
+  )
+}
+
 export default function Dashboard({ user }: { user: User }) {
   const supabase = createClient()
   const today = new Date()
@@ -107,8 +122,10 @@ export default function Dashboard({ user }: { user: User }) {
   const [openDays, setOpenDays] = useState<string[]>([todayKey])
   const [todayInput, setTodayInput] = useState('')
   const [todayPriority, setTodayPriority] = useState('P1')
+  const [todayGoalId, setTodayGoalId] = useState('')
   const [weekInputs, setWeekInputs] = useState<Record<string, string>>({})
   const [weekPriorities, setWeekPriorities] = useState<Record<string, string>>({})
+  const [weekGoalIds, setWeekGoalIds] = useState<Record<string, string>>({})
   const [goalInput, setGoalInput] = useState('')
   const [goalTimeframe, setGoalTimeframe] = useState('This month')
   const [goalPriority, setGoalPriority] = useState('P1')
@@ -131,7 +148,6 @@ export default function Dashboard({ user }: { user: User }) {
     new Date(b.completed_at || 0).getTime() - new Date(a.completed_at || 0).getTime()
   )
 
-  // Week stats for weekly review
   const reviewWeekEnd = new Date(reviewWeekStart)
   reviewWeekEnd.setDate(reviewWeekEnd.getDate() + 6)
   const weekTasksForReview = allTasks.filter(t => t.date >= reviewWeekKey && t.date <= dateKey(reviewWeekEnd))
@@ -151,22 +167,12 @@ export default function Dashboard({ user }: { user: User }) {
   }, [user.id, supabase])
 
   const fetchJournal = useCallback(async () => {
-    const { data } = await supabase
-      .from('journal_entries')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('date', journalKey)
-      .single()
+    const { data } = await supabase.from('journal_entries').select('*').eq('user_id', user.id).eq('date', journalKey).single()
     setJournal(data || { wins: '', tasks_reflection: '', time_reflection: '', improve: '', quick_entry: '' })
   }, [user.id, journalKey, supabase])
 
   const fetchWeeklyReview = useCallback(async () => {
-    const { data } = await supabase
-      .from('weekly_reviews')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('week_start', reviewWeekKey)
-      .single()
+    const { data } = await supabase.from('weekly_reviews').select('*').eq('user_id', user.id).eq('week_start', reviewWeekKey).single()
     setWeeklyReview(data || { went_well: '', didnt_go_well: '', focus_next_week: '' })
   }, [user.id, reviewWeekKey, supabase])
 
@@ -174,28 +180,31 @@ export default function Dashboard({ user }: { user: User }) {
   useEffect(() => { fetchJournal() }, [fetchJournal])
   useEffect(() => { fetchWeeklyReview() }, [fetchWeeklyReview])
 
-  async function addTask(date: string, text: string, priority: string) {
+  async function addTask(date: string, text: string, priority: string, goalId: string) {
     if (!text.trim()) return
     const { data } = await supabase
       .from('week_tasks')
-      .insert({ user_id: user.id, text: text.trim(), done: false, date, priority })
+      .insert({ user_id: user.id, text: text.trim(), done: false, date, priority, goal_id: goalId || null })
       .select()
       .single()
     if (data) setAllTasks(prev => [...prev, data])
   }
 
   async function addTodayTask() {
-    await addTask(todayKey, todayInput, todayPriority)
+    await addTask(todayKey, todayInput, todayPriority, todayGoalId)
     setTodayInput('')
     setTodayPriority('P1')
+    setTodayGoalId('')
   }
 
   async function addWeekTask(date: string) {
     const text = weekInputs[date] || ''
     const priority = weekPriorities[date] || 'P1'
-    await addTask(date, text, priority)
+    const goalId = weekGoalIds[date] || ''
+    await addTask(date, text, priority, goalId)
     setWeekInputs(prev => ({ ...prev, [date]: '' }))
     setWeekPriorities(prev => ({ ...prev, [date]: 'P1' }))
+    setWeekGoalIds(prev => ({ ...prev, [date]: '' }))
   }
 
   async function toggleTask(id: string, done: boolean) {
@@ -376,9 +385,10 @@ export default function Dashboard({ user }: { user: User }) {
             <input value={todayInput} onChange={e => setTodayInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && addTodayTask()}
               placeholder="Add a task for today..." style={{ flex: 1, minWidth: '160px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 14px', color: 'var(--text)', fontSize: '0.88rem', outline: 'none' }} />
             <PrioritySelect value={todayPriority} onChange={setTodayPriority} />
+            {activeGoals.length > 0 && <GoalSelect value={todayGoalId} onChange={setTodayGoalId} goals={activeGoals} />}
             <button onClick={addTodayTask} style={{ background: 'var(--accent)', border: 'none', borderRadius: '10px', padding: '10px 16px', color: '#fff', fontSize: '0.88rem', fontWeight: 500, cursor: 'pointer' }}>+ Add</button>
           </div>
-          <TaskList tasks={todayTasks} onToggle={toggleTask} onDelete={deleteTask} />
+          <TaskList tasks={todayTasks} onToggle={toggleTask} onDelete={deleteTask} goals={activeGoals} />
         </div>
       )}
 
@@ -418,9 +428,10 @@ export default function Dashboard({ user }: { user: User }) {
                           onKeyDown={e => e.key === 'Enter' && addWeekTask(dk)} placeholder="Add task..."
                           style={{ flex: 1, minWidth: '120px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--text)', fontSize: '0.82rem', outline: 'none' }} />
                         <PrioritySelect value={weekPriorities[dk] || 'P1'} onChange={v => setWeekPriorities(prev => ({ ...prev, [dk]: v }))} />
+                        {activeGoals.length > 0 && <GoalSelect value={weekGoalIds[dk] || ''} onChange={v => setWeekGoalIds(prev => ({ ...prev, [dk]: v }))} goals={activeGoals} />}
                         <button onClick={() => addWeekTask(dk)} style={{ background: 'var(--accent)', border: 'none', borderRadius: '8px', padding: '8px 12px', color: '#fff', fontSize: '0.82rem', cursor: 'pointer' }}>+</button>
                       </div>
-                      <TaskList tasks={tasks} onToggle={toggleTask} onDelete={deleteTask} />
+                      <TaskList tasks={tasks} onToggle={toggleTask} onDelete={deleteTask} goals={activeGoals} />
                     </div>
                   )}
                 </div>
@@ -459,19 +470,30 @@ export default function Dashboard({ user }: { user: User }) {
           {activeGoals.length === 0
             ? <div style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--text3)', fontSize: '0.85rem', border: '1px dashed var(--border)', borderRadius: '12px' }}>No active goals — what are you working towards?</div>
             : <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {activeGoals.map(g => (
-                <div key={g.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '13px 14px' }}
-                  onMouseEnter={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '1'}
-                  onMouseLeave={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '0'}>
-                  <PriorityBadge priority={g.priority} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '0.9rem', color: 'var(--text)' }}>{g.text}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text3)', marginTop: '3px' }}>{g.timeframe}</div>
+              {activeGoals.map(g => {
+                const linkedTasks = allTasks.filter(t => t.goal_id === g.id)
+                const linkedDone = linkedTasks.filter(t => t.done).length
+                return (
+                  <div key={g.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '13px 14px' }}
+                    onMouseEnter={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '1'}
+                    onMouseLeave={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '0'}>
+                    <PriorityBadge priority={g.priority} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '0.9rem', color: 'var(--text)' }}>{g.text}</div>
+                      <div style={{ display: 'flex', gap: '10px', marginTop: '4px', flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>{g.timeframe}</div>
+                        {linkedTasks.length > 0 && (
+                          <div style={{ fontSize: '0.75rem', color: 'var(--accent)' }}>
+                            {linkedDone}/{linkedTasks.length} tasks linked
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <button onClick={() => completeGoal(g.id)} style={{ background: 'var(--green-dim)', border: '1px solid rgba(78,202,139,0.2)', borderRadius: '8px', padding: '4px 10px', color: 'var(--green)', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>✓ Done</button>
+                    <button className="del" onClick={() => deleteGoal(g.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px' }}>✕</button>
                   </div>
-                  <button onClick={() => completeGoal(g.id)} style={{ background: 'var(--green-dim)', border: '1px solid rgba(78,202,139,0.2)', borderRadius: '8px', padding: '4px 10px', color: 'var(--green)', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>✓ Done</button>
-                  <button className="del" onClick={() => deleteGoal(g.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px' }}>✕</button>
-                </div>
-              ))}
+                )
+              })}
             </div>
           }
 
@@ -511,7 +533,6 @@ export default function Dashboard({ user }: { user: User }) {
       {/* JOURNAL */}
       {activeTab === 'journal' && (
         <div>
-          {/* Daily Journal */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
             <div>
               <div style={{ fontFamily: 'var(--font-syne)', fontSize: '1.1rem', fontWeight: 700 }}>Daily Journal</div>
@@ -570,10 +591,7 @@ export default function Dashboard({ user }: { user: User }) {
 
           {/* Weekly Review */}
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: '32px' }}>
-            <div
-              onClick={() => setShowWeeklyReview(p => !p)}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', marginBottom: showWeeklyReview ? '20px' : '0' }}
-            >
+            <div onClick={() => setShowWeeklyReview(p => !p)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', marginBottom: showWeeklyReview ? '20px' : '0' }}>
               <div>
                 <div style={{ fontFamily: 'var(--font-syne)', fontSize: '1.1rem', fontWeight: 700 }}>Weekly Review</div>
                 <div style={{ fontSize: '0.78rem', color: 'var(--text3)', marginTop: '2px' }}>Reflect on your week as a whole</div>
@@ -583,14 +601,12 @@ export default function Dashboard({ user }: { user: User }) {
 
             {showWeeklyReview && (
               <>
-                {/* Week navigation */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
                   <button onClick={() => setWeekReviewOffset(p => p - 1)} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text2)', cursor: 'pointer', padding: '6px 12px', fontSize: '14px' }}>←</button>
                   <div style={{ flex: 1, textAlign: 'center', fontFamily: 'var(--font-syne)', fontSize: '0.82rem', fontWeight: 700, color: 'var(--text2)' }}>{formatWeekRange(reviewWeekStart)}</div>
                   <button onClick={() => setWeekReviewOffset(p => p + 1)} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text2)', cursor: 'pointer', padding: '6px 12px', fontSize: '14px' }}>→</button>
                 </div>
 
-                {/* Week stats */}
                 <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
                   <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '12px 16px', flex: 1, minWidth: '120px' }}>
                     <div style={{ fontSize: '0.72rem', color: 'var(--text3)', marginBottom: '4px', fontFamily: 'var(--font-syne)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Tasks done</div>
@@ -602,7 +618,6 @@ export default function Dashboard({ user }: { user: User }) {
                   </div>
                 </div>
 
-                {/* Review prompts */}
                 {[
                   { key: 'went_well', label: 'What went well this week?' },
                   { key: 'didnt_go_well', label: "What didn't go well?" },
@@ -639,22 +654,37 @@ export default function Dashboard({ user }: { user: User }) {
   )
 }
 
-function TaskList({ tasks, onToggle, onDelete }: { tasks: Task[], onToggle: (id: string, done: boolean) => void, onDelete: (id: string) => void }) {
+function TaskList({ tasks, onToggle, onDelete, goals }: {
+  tasks: Task[]
+  onToggle: (id: string, done: boolean) => void
+  onDelete: (id: string) => void
+  goals: { id: string; text: string }[]
+}) {
   if (!tasks.length) return <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)', fontSize: '0.82rem', border: '1px dashed var(--border)', borderRadius: '10px' }}>No tasks yet</div>
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-      {tasks.map(t => (
-        <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '10px', padding: '11px 14px', opacity: t.done ? 0.45 : 1 }}
-          onMouseEnter={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '1'}
-          onMouseLeave={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '0'}>
-          <div onClick={() => onToggle(t.id, t.done)} style={{ width: '18px', height: '18px', borderRadius: '50%', border: `1.5px solid ${t.done ? 'var(--green)' : 'var(--border-hover)'}`, background: t.done ? 'var(--green)' : 'transparent', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {t.done && <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4l2.5 2.5L9 1" stroke="#0a0a0f" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+      {tasks.map(t => {
+        const linkedGoal = t.goal_id ? goals.find(g => g.id === t.goal_id) : null
+        return (
+          <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '10px', padding: '11px 14px', opacity: t.done ? 0.45 : 1 }}
+            onMouseEnter={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '1'}
+            onMouseLeave={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '0'}>
+            <div onClick={() => onToggle(t.id, t.done)} style={{ width: '18px', height: '18px', borderRadius: '50%', border: `1.5px solid ${t.done ? 'var(--green)' : 'var(--border-hover)'}`, background: t.done ? 'var(--green)' : 'transparent', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {t.done && <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4l2.5 2.5L9 1" stroke="#0a0a0f" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+            </div>
+            <PriorityBadge priority={t.priority || 'P1'} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: '0.88rem', color: 'var(--text)', textDecoration: t.done ? 'line-through' : 'none' }}>{t.text}</div>
+              {linkedGoal && (
+                <div style={{ fontSize: '0.72rem', color: 'var(--accent)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  ↳ {linkedGoal.text}
+                </div>
+              )}
+            </div>
+            <button className="del" onClick={() => onDelete(t.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px' }}>✕</button>
           </div>
-          <PriorityBadge priority={t.priority || 'P1'} />
-          <span style={{ flex: 1, fontSize: '0.88rem', color: 'var(--text)', textDecoration: t.done ? 'line-through' : 'none' }}>{t.text}</span>
-          <button className="del" onClick={() => onDelete(t.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px' }}>✕</button>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
