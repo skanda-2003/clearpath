@@ -19,12 +19,25 @@ function dateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
+function getWeekStart(d: Date): Date {
+  const start = new Date(d)
+  start.setDate(start.getDate() - start.getDay())
+  start.setHours(0, 0, 0, 0)
+  return start
+}
+
 function formatDisplay(d: Date) {
   return `${DAYS[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}`
 }
 
 function formatShort(d: Date) {
   return `${SHORT_DAYS[d.getDay()]} ${d.getDate()}`
+}
+
+function formatWeekRange(weekStart: Date): string {
+  const weekEnd = new Date(weekStart)
+  weekEnd.setDate(weekEnd.getDate() + 6)
+  return `${MONTHS[weekStart.getMonth()]} ${weekStart.getDate()} — ${MONTHS[weekEnd.getMonth()]} ${weekEnd.getDate()}, ${weekEnd.getFullYear()}`
 }
 
 function getWeekDays() {
@@ -46,6 +59,7 @@ function sortByPriority<T extends { priority: string }>(items: T[]): T[] {
 type Task = { id: string; text: string; done: boolean; date: string; priority: string }
 type Goal = { id: string; text: string; timeframe: string; priority: string; completed: boolean; completed_at: string | null }
 type Journal = { wins: string; tasks_reflection: string; time_reflection: string; improve: string; quick_entry: string }
+type WeeklyReview = { went_well: string; didnt_go_well: string; focus_next_week: string }
 type Streak = { current_streak: number; longest_streak: number; last_journal_date: string | null }
 
 function PriorityBadge({ priority }: { priority: string }) {
@@ -86,6 +100,10 @@ export default function Dashboard({ user }: { user: User }) {
   const [journal, setJournal] = useState<Journal>({ wins: '', tasks_reflection: '', time_reflection: '', improve: '', quick_entry: '' })
   const [journalMode, setJournalMode] = useState<'quick' | 'deep'>('quick')
   const [journalOffset, setJournalOffset] = useState(0)
+  const [weeklyReview, setWeeklyReview] = useState<WeeklyReview>({ went_well: '', didnt_go_well: '', focus_next_week: '' })
+  const [weekReviewOffset, setWeekReviewOffset] = useState(0)
+  const [weekReviewSaveStatus, setWeekReviewSaveStatus] = useState(false)
+  const [showWeeklyReview, setShowWeeklyReview] = useState(false)
   const [openDays, setOpenDays] = useState<string[]>([todayKey])
   const [todayInput, setTodayInput] = useState('')
   const [todayPriority, setTodayPriority] = useState('P1')
@@ -103,11 +121,22 @@ export default function Dashboard({ user }: { user: User }) {
   journalDate.setDate(journalDate.getDate() + journalOffset)
   const journalKey = dateKey(journalDate)
 
+  const reviewWeekStart = getWeekStart(new Date())
+  reviewWeekStart.setDate(reviewWeekStart.getDate() + weekReviewOffset * 7)
+  const reviewWeekKey = dateKey(reviewWeekStart)
+
   const todayTasks = sortByPriority(allTasks.filter(t => t.date === todayKey))
   const activeGoals = sortByPriority(goals.filter(g => !g.completed))
   const achievedGoals = goals.filter(g => g.completed).sort((a, b) =>
     new Date(b.completed_at || 0).getTime() - new Date(a.completed_at || 0).getTime()
   )
+
+  // Week stats for weekly review
+  const reviewWeekEnd = new Date(reviewWeekStart)
+  reviewWeekEnd.setDate(reviewWeekEnd.getDate() + 6)
+  const weekTasksForReview = allTasks.filter(t => t.date >= reviewWeekKey && t.date <= dateKey(reviewWeekEnd))
+  const weekDoneCount = weekTasksForReview.filter(t => t.done).length
+  const weekCompletionPct = weekTasksForReview.length ? Math.round(weekDoneCount / weekTasksForReview.length * 100) : 0
 
   const fetchAll = useCallback(async () => {
     const [wt, g, st] = await Promise.all([
@@ -131,8 +160,19 @@ export default function Dashboard({ user }: { user: User }) {
     setJournal(data || { wins: '', tasks_reflection: '', time_reflection: '', improve: '', quick_entry: '' })
   }, [user.id, journalKey, supabase])
 
+  const fetchWeeklyReview = useCallback(async () => {
+    const { data } = await supabase
+      .from('weekly_reviews')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('week_start', reviewWeekKey)
+      .single()
+    setWeeklyReview(data || { went_well: '', didnt_go_well: '', focus_next_week: '' })
+  }, [user.id, reviewWeekKey, supabase])
+
   useEffect(() => { fetchAll() }, [fetchAll])
   useEffect(() => { fetchJournal() }, [fetchJournal])
+  useEffect(() => { fetchWeeklyReview() }, [fetchWeeklyReview])
 
   async function addTask(date: string, text: string, priority: string) {
     if (!text.trim()) return
@@ -206,7 +246,6 @@ export default function Dashboard({ user }: { user: User }) {
       { onConflict: 'user_id,date' }
     )
 
-    // Update streak only if there's actual content and it's today
     const todayStr = dateKey(new Date())
     if (journalKey === todayStr && hasContent) {
       const yesterday = new Date()
@@ -227,6 +266,15 @@ export default function Dashboard({ user }: { user: User }) {
 
     setSaveStatus(true)
     setTimeout(() => setSaveStatus(false), 2000)
+  }
+
+  async function saveWeeklyReview() {
+    await supabase.from('weekly_reviews').upsert(
+      { user_id: user.id, week_start: reviewWeekKey, ...weeklyReview },
+      { onConflict: 'user_id,week_start' }
+    )
+    setWeekReviewSaveStatus(true)
+    setTimeout(() => setWeekReviewSaveStatus(false), 2000)
   }
 
   async function signOut() {
@@ -463,12 +511,12 @@ export default function Dashboard({ user }: { user: User }) {
       {/* JOURNAL */}
       {activeTab === 'journal' && (
         <div>
+          {/* Daily Journal */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
             <div>
               <div style={{ fontFamily: 'var(--font-syne)', fontSize: '1.1rem', fontWeight: 700 }}>Daily Journal</div>
               <div style={{ fontSize: '0.78rem', color: 'var(--text3)', marginTop: '2px' }}>Reflect on your day</div>
             </div>
-            {/* Mode toggle */}
             <div style={{ display: 'flex', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '3px', gap: '3px' }}>
               {(['quick', 'deep'] as const).map(mode => (
                 <button key={mode} onClick={() => setJournalMode(mode)} style={{
@@ -482,30 +530,21 @@ export default function Dashboard({ user }: { user: User }) {
             </div>
           </div>
 
-          {/* Date navigation */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
             <button onClick={() => setJournalOffset(p => p - 1)} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text2)', cursor: 'pointer', padding: '6px 12px', fontSize: '14px' }}>←</button>
             <div style={{ flex: 1, textAlign: 'center', fontFamily: 'var(--font-syne)', fontSize: '0.85rem', fontWeight: 700, color: 'var(--text2)' }}>{formatDisplay(journalDate)}</div>
             <button onClick={() => setJournalOffset(p => p + 1)} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text2)', cursor: 'pointer', padding: '6px 12px', fontSize: '14px' }}>→</button>
           </div>
 
-          {/* Quick mode */}
           {journalMode === 'quick' && (
             <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', marginBottom: '12px' }}>
-              <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontFamily: 'var(--font-syne)', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                How was your day?
-              </div>
-              <textarea
-                value={journal.quick_entry}
-                onChange={e => setJournal(prev => ({ ...prev, quick_entry: e.target.value }))}
-                placeholder="Write anything — 2 lines or 2 pages, whatever feels right..."
-                rows={6}
-                style={{ width: '100%', background: 'transparent', border: 'none', padding: '12px 14px', color: 'var(--text)', fontSize: '0.88rem', lineHeight: 1.7, resize: 'none', outline: 'none' }}
-              />
+              <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontFamily: 'var(--font-syne)', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>How was your day?</div>
+              <textarea value={journal.quick_entry} onChange={e => setJournal(prev => ({ ...prev, quick_entry: e.target.value }))}
+                placeholder="Write anything — 2 lines or 2 pages, whatever feels right..." rows={6}
+                style={{ width: '100%', background: 'transparent', border: 'none', padding: '12px 14px', color: 'var(--text)', fontSize: '0.88rem', lineHeight: 1.7, resize: 'none', outline: 'none' }} />
             </div>
           )}
 
-          {/* Deep mode */}
           {journalMode === 'deep' && (
             <>
               {[
@@ -524,9 +563,65 @@ export default function Dashboard({ user }: { user: User }) {
             </>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px', marginBottom: '40px' }}>
             {saveStatus && <span style={{ fontSize: '0.78rem', color: 'var(--green)' }}>Saved ✓</span>}
             <button onClick={saveJournal} style={{ background: 'var(--bg3)', border: '1px solid var(--border-hover)', borderRadius: '8px', padding: '8px 20px', color: 'var(--text)', fontSize: '0.82rem', fontWeight: 500, cursor: 'pointer' }}>Save Entry</button>
+          </div>
+
+          {/* Weekly Review */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: '32px' }}>
+            <div
+              onClick={() => setShowWeeklyReview(p => !p)}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', marginBottom: showWeeklyReview ? '20px' : '0' }}
+            >
+              <div>
+                <div style={{ fontFamily: 'var(--font-syne)', fontSize: '1.1rem', fontWeight: 700 }}>Weekly Review</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text3)', marginTop: '2px' }}>Reflect on your week as a whole</div>
+              </div>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text3)', fontWeight: 500 }}>{showWeeklyReview ? '▴' : '▾'}</span>
+            </div>
+
+            {showWeeklyReview && (
+              <>
+                {/* Week navigation */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                  <button onClick={() => setWeekReviewOffset(p => p - 1)} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text2)', cursor: 'pointer', padding: '6px 12px', fontSize: '14px' }}>←</button>
+                  <div style={{ flex: 1, textAlign: 'center', fontFamily: 'var(--font-syne)', fontSize: '0.82rem', fontWeight: 700, color: 'var(--text2)' }}>{formatWeekRange(reviewWeekStart)}</div>
+                  <button onClick={() => setWeekReviewOffset(p => p + 1)} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text2)', cursor: 'pointer', padding: '6px 12px', fontSize: '14px' }}>→</button>
+                </div>
+
+                {/* Week stats */}
+                <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
+                  <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '12px 16px', flex: 1, minWidth: '120px' }}>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text3)', marginBottom: '4px', fontFamily: 'var(--font-syne)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Tasks done</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 700, fontFamily: 'var(--font-syne)', color: 'var(--text)' }}>{weekDoneCount}<span style={{ fontSize: '0.85rem', color: 'var(--text3)', fontWeight: 400 }}>/{weekTasksForReview.length}</span></div>
+                  </div>
+                  <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '12px 16px', flex: 1, minWidth: '120px' }}>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text3)', marginBottom: '4px', fontFamily: 'var(--font-syne)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Completion</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 700, fontFamily: 'var(--font-syne)', color: weekCompletionPct >= 80 ? 'var(--green)' : weekCompletionPct >= 50 ? 'var(--amber)' : 'var(--red)' }}>{weekCompletionPct}%</div>
+                  </div>
+                </div>
+
+                {/* Review prompts */}
+                {[
+                  { key: 'went_well', label: 'What went well this week?' },
+                  { key: 'didnt_go_well', label: "What didn't go well?" },
+                  { key: 'focus_next_week', label: 'What will I focus on next week?' },
+                ].map(({ key, label }) => (
+                  <div key={key} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', marginBottom: '12px' }}>
+                    <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontFamily: 'var(--font-syne)', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{label}</div>
+                    <textarea value={weeklyReview[key as keyof WeeklyReview]} onChange={e => setWeeklyReview(prev => ({ ...prev, [key]: e.target.value }))}
+                      placeholder="Write here..." rows={3}
+                      style={{ width: '100%', background: 'transparent', border: 'none', padding: '12px 14px', color: 'var(--text)', fontSize: '0.88rem', lineHeight: 1.7, resize: 'none', outline: 'none' }} />
+                  </div>
+                ))}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px' }}>
+                  {weekReviewSaveStatus && <span style={{ fontSize: '0.78rem', color: 'var(--green)' }}>Saved ✓</span>}
+                  <button onClick={saveWeeklyReview} style={{ background: 'var(--bg3)', border: '1px solid var(--border-hover)', borderRadius: '8px', padding: '8px 20px', color: 'var(--text)', fontSize: '0.82rem', fontWeight: 500, cursor: 'pointer' }}>Save Review</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
