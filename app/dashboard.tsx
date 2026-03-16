@@ -42,8 +42,7 @@ export default function Dashboard({ user }: { user: User }) {
   const todayKey = dateKey(today)
 
   const [activeTab, setActiveTab] = useState('today')
-  const [todayTasks, setTodayTasks] = useState<Task[]>([])
-  const [weekTasks, setWeekTasks] = useState<Task[]>([])
+  const [allTasks, setAllTasks] = useState<Task[]>([])
   const [goals, setGoals] = useState<Goal[]>([])
   const [journal, setJournal] = useState<Journal>({ wins: '', tasks_reflection: '', time_reflection: '', improve: '' })
   const [journalOffset, setJournalOffset] = useState(0)
@@ -60,19 +59,20 @@ export default function Dashboard({ user }: { user: User }) {
   journalDate.setDate(journalDate.getDate() + journalOffset)
   const journalKey = dateKey(journalDate)
 
+  // Today tasks are just week_tasks filtered for today
+  const todayTasks = allTasks.filter(t => t.date === todayKey)
+
   const fetchAll = useCallback(async () => {
-    const [tt, wt, g, st] = await Promise.all([
-      supabase.from('tasks').select('*').eq('user_id', user.id).eq('date', todayKey),
+    const [wt, g, st] = await Promise.all([
       supabase.from('week_tasks').select('*').eq('user_id', user.id),
       supabase.from('goals').select('*').eq('user_id', user.id).order('created_at'),
       supabase.from('streaks').select('*').eq('user_id', user.id).single(),
     ])
-    setTodayTasks(tt.data || [])
-    setWeekTasks(wt.data || [])
+    setAllTasks(wt.data || [])
     setGoals(g.data || [])
     if (st.data) setStreak(st.data)
     setLoading(false)
-  }, [user.id, todayKey, supabase])
+  }, [user.id, supabase])
 
   const fetchJournal = useCallback(async () => {
     const { data } = await supabase.from('journal_entries').select('*').eq('user_id', user.id).eq('date', journalKey).single()
@@ -82,39 +82,36 @@ export default function Dashboard({ user }: { user: User }) {
   useEffect(() => { fetchAll() }, [fetchAll])
   useEffect(() => { fetchJournal() }, [fetchJournal])
 
+  // All task operations now use week_tasks table only
+  async function addTask(date: string, text: string) {
+    if (!text.trim()) return
+    const { data } = await supabase
+      .from('week_tasks')
+      .insert({ user_id: user.id, text: text.trim(), done: false, date })
+      .select()
+      .single()
+    if (data) setAllTasks(prev => [...prev, data])
+  }
+
   async function addTodayTask() {
-    if (!todayInput.trim()) return
-    const { data } = await supabase.from('tasks').insert({ user_id: user.id, text: todayInput.trim(), done: false, date: todayKey }).select().single()
-    if (data) setTodayTasks(prev => [...prev, data])
+    await addTask(todayKey, todayInput)
     setTodayInput('')
   }
 
-  async function toggleTodayTask(id: string, done: boolean) {
-    await supabase.from('tasks').update({ done: !done }).eq('id', id)
-    setTodayTasks(prev => prev.map(t => t.id === id ? { ...t, done: !done } : t))
-  }
-
-  async function deleteTodayTask(id: string) {
-    await supabase.from('tasks').delete().eq('id', id)
-    setTodayTasks(prev => prev.filter(t => t.id !== id))
-  }
-
   async function addWeekTask(date: string) {
-    const text = weekInputs[date]?.trim()
-    if (!text) return
-    const { data } = await supabase.from('week_tasks').insert({ user_id: user.id, text, done: false, date }).select().single()
-    if (data) setWeekTasks(prev => [...prev, data])
+    const text = weekInputs[date] || ''
+    await addTask(date, text)
     setWeekInputs(prev => ({ ...prev, [date]: '' }))
   }
 
-  async function toggleWeekTask(id: string, done: boolean) {
+  async function toggleTask(id: string, done: boolean) {
     await supabase.from('week_tasks').update({ done: !done }).eq('id', id)
-    setWeekTasks(prev => prev.map(t => t.id === id ? { ...t, done: !done } : t))
+    setAllTasks(prev => prev.map(t => t.id === id ? { ...t, done: !done } : t))
   }
 
-  async function deleteWeekTask(id: string) {
+  async function deleteTask(id: string) {
     await supabase.from('week_tasks').delete().eq('id', id)
-    setWeekTasks(prev => prev.filter(t => t.id !== id))
+    setAllTasks(prev => prev.filter(t => t.id !== id))
   }
 
   async function addGoal() {
@@ -140,18 +137,11 @@ export default function Dashboard({ user }: { user: User }) {
       const yesterday = new Date()
       yesterday.setDate(yesterday.getDate() - 1)
       const yesterdayStr = dateKey(yesterday)
-
       const isAlreadyCounted = streak.last_journal_date === todayStr
       if (!isAlreadyCounted) {
-        const newStreak = streak.last_journal_date === yesterdayStr
-          ? streak.current_streak + 1
-          : 1
+        const newStreak = streak.last_journal_date === yesterdayStr ? streak.current_streak + 1 : 1
         const newLongest = Math.max(newStreak, streak.longest_streak)
-        const updatedStreak = {
-          current_streak: newStreak,
-          longest_streak: newLongest,
-          last_journal_date: todayStr
-        }
+        const updatedStreak = { current_streak: newStreak, longest_streak: newLongest, last_journal_date: todayStr }
         await supabase.from('streaks').upsert(
           { user_id: user.id, ...updatedStreak, updated_at: new Date().toISOString() },
           { onConflict: 'user_id' }
@@ -234,8 +224,7 @@ export default function Dashboard({ user }: { user: User }) {
             <button key={tab} onClick={() => setActiveTab(tab)} style={{
               flex: 1, padding: '9px 12px', border: activeTab === tab ? '1px solid var(--border-hover)' : '1px solid transparent',
               borderRadius: '9px', background: activeTab === tab ? 'var(--bg4)' : 'transparent',
-              color: activeTab === tab ? 'var(--text)' : 'var(--text3)', fontSize: '0.82rem', fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s',
-              textTransform: 'capitalize'
+              color: activeTab === tab ? 'var(--text)' : 'var(--text3)', fontSize: '0.82rem', fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s'
             }}>
               {tab === 'today' ? 'Today' : tab === 'week' ? 'This Week' : tab === 'goals' ? 'Big Goals' : 'Journal'}
             </button>
@@ -265,7 +254,7 @@ export default function Dashboard({ user }: { user: User }) {
               placeholder="Add a task for today..." style={{ flex: 1, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 14px', color: 'var(--text)', fontSize: '0.88rem', outline: 'none' }} />
             <button onClick={addTodayTask} style={{ background: 'var(--accent)', border: 'none', borderRadius: '10px', padding: '10px 16px', color: '#fff', fontSize: '0.88rem', fontWeight: 500, cursor: 'pointer' }}>+ Add</button>
           </div>
-          <TaskList tasks={todayTasks} onToggle={(id, done) => toggleTodayTask(id, done)} onDelete={deleteTodayTask} />
+          <TaskList tasks={todayTasks} onToggle={toggleTask} onDelete={deleteTask} />
         </div>
       )}
 
@@ -283,7 +272,7 @@ export default function Dashboard({ user }: { user: User }) {
             {weekDays.map(day => {
               const dk = dateKey(day)
               const isToday = dk === todayKey
-              const tasks = weekTasks.filter(t => t.date === dk)
+              const tasks = allTasks.filter(t => t.date === dk)
               const done = tasks.filter(t => t.done).length
               const isOpen = openDays.includes(dk)
               return (
@@ -295,7 +284,7 @@ export default function Dashboard({ user }: { user: User }) {
                     </span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       {tasks.length > 0 && <span style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>{done}/{tasks.length}</span>}
-                      <span style={{ color: 'var(--text3)', fontSize: '12px', transition: 'transform 0.2s', display: 'inline-block', transform: isOpen ? 'rotate(180deg)' : 'none' }}>▾</span>
+                      <span style={{ color: 'var(--text3)', fontSize: '12px', display: 'inline-block', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>▾</span>
                     </div>
                   </div>
                   {isOpen && (
@@ -306,7 +295,7 @@ export default function Dashboard({ user }: { user: User }) {
                           style={{ flex: 1, background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--text)', fontSize: '0.82rem', outline: 'none' }} />
                         <button onClick={() => addWeekTask(dk)} style={{ background: 'var(--accent)', border: 'none', borderRadius: '8px', padding: '8px 12px', color: '#fff', fontSize: '0.82rem', cursor: 'pointer' }}>+</button>
                       </div>
-                      <TaskList tasks={tasks} onToggle={(id, done) => toggleWeekTask(id, done)} onDelete={deleteWeekTask} />
+                      <TaskList tasks={tasks} onToggle={toggleTask} onDelete={deleteTask} />
                     </div>
                   )}
                 </div>
