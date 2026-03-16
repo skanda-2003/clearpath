@@ -7,6 +7,14 @@ const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Satur
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const SHORT_DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
 
+const PRIORITY_ORDER: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 }
+const PRIORITY_COLORS: Record<string, string> = {
+  P0: '#e05555',
+  P1: '#f0a050',
+  P2: '#7c6af5',
+  P3: '#5a5868',
+}
+
 function dateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
@@ -31,10 +39,41 @@ function getWeekDays() {
   return days
 }
 
-type Task = { id: string; text: string; done: boolean; date: string }
-type Goal = { id: string; text: string; timeframe: string }
+function sortByPriority<T extends { priority: string }>(items: T[]): T[] {
+  return [...items].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority])
+}
+
+type Task = { id: string; text: string; done: boolean; date: string; priority: string }
+type Goal = { id: string; text: string; timeframe: string; priority: string }
 type Journal = { wins: string; tasks_reflection: string; time_reflection: string; improve: string }
 type Streak = { current_streak: number; longest_streak: number; last_journal_date: string | null }
+
+function PriorityBadge({ priority }: { priority: string }) {
+  return (
+    <span style={{
+      fontSize: '0.68rem', fontWeight: 600, padding: '2px 7px', borderRadius: '6px',
+      background: PRIORITY_COLORS[priority] + '22',
+      color: PRIORITY_COLORS[priority],
+      border: `1px solid ${PRIORITY_COLORS[priority]}44`,
+      letterSpacing: '0.03em', flexShrink: 0
+    }}>{priority}</span>
+  )
+}
+
+function PrioritySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} style={{
+      background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '8px',
+      padding: '8px 10px', color: PRIORITY_COLORS[value], fontSize: '0.82rem',
+      outline: 'none', cursor: 'pointer', fontWeight: 600
+    }}>
+      <option value="P0" style={{ color: PRIORITY_COLORS['P0'] }}>P0</option>
+      <option value="P1" style={{ color: PRIORITY_COLORS['P1'] }}>P1</option>
+      <option value="P2" style={{ color: PRIORITY_COLORS['P2'] }}>P2</option>
+      <option value="P3" style={{ color: PRIORITY_COLORS['P3'] }}>P3</option>
+    </select>
+  )
+}
 
 export default function Dashboard({ user }: { user: User }) {
   const supabase = createClient()
@@ -48,9 +87,12 @@ export default function Dashboard({ user }: { user: User }) {
   const [journalOffset, setJournalOffset] = useState(0)
   const [openDays, setOpenDays] = useState<string[]>([todayKey])
   const [todayInput, setTodayInput] = useState('')
+  const [todayPriority, setTodayPriority] = useState('P1')
   const [weekInputs, setWeekInputs] = useState<Record<string, string>>({})
+  const [weekPriorities, setWeekPriorities] = useState<Record<string, string>>({})
   const [goalInput, setGoalInput] = useState('')
   const [goalTimeframe, setGoalTimeframe] = useState('This month')
+  const [goalPriority, setGoalPriority] = useState('P1')
   const [saveStatus, setSaveStatus] = useState(false)
   const [loading, setLoading] = useState(true)
   const [streak, setStreak] = useState<Streak>({ current_streak: 0, longest_streak: 0, last_journal_date: null })
@@ -59,8 +101,7 @@ export default function Dashboard({ user }: { user: User }) {
   journalDate.setDate(journalDate.getDate() + journalOffset)
   const journalKey = dateKey(journalDate)
 
-  // Today tasks are just week_tasks filtered for today
-  const todayTasks = allTasks.filter(t => t.date === todayKey)
+  const todayTasks = sortByPriority(allTasks.filter(t => t.date === todayKey))
 
   const fetchAll = useCallback(async () => {
     const [wt, g, st] = await Promise.all([
@@ -82,26 +123,28 @@ export default function Dashboard({ user }: { user: User }) {
   useEffect(() => { fetchAll() }, [fetchAll])
   useEffect(() => { fetchJournal() }, [fetchJournal])
 
-  // All task operations now use week_tasks table only
-  async function addTask(date: string, text: string) {
+  async function addTask(date: string, text: string, priority: string) {
     if (!text.trim()) return
     const { data } = await supabase
       .from('week_tasks')
-      .insert({ user_id: user.id, text: text.trim(), done: false, date })
+      .insert({ user_id: user.id, text: text.trim(), done: false, date, priority })
       .select()
       .single()
     if (data) setAllTasks(prev => [...prev, data])
   }
 
   async function addTodayTask() {
-    await addTask(todayKey, todayInput)
+    await addTask(todayKey, todayInput, todayPriority)
     setTodayInput('')
+    setTodayPriority('P1')
   }
 
   async function addWeekTask(date: string) {
     const text = weekInputs[date] || ''
-    await addTask(date, text)
+    const priority = weekPriorities[date] || 'P1'
+    await addTask(date, text, priority)
     setWeekInputs(prev => ({ ...prev, [date]: '' }))
+    setWeekPriorities(prev => ({ ...prev, [date]: 'P1' }))
   }
 
   async function toggleTask(id: string, done: boolean) {
@@ -116,9 +159,14 @@ export default function Dashboard({ user }: { user: User }) {
 
   async function addGoal() {
     if (!goalInput.trim()) return
-    const { data } = await supabase.from('goals').insert({ user_id: user.id, text: goalInput.trim(), timeframe: goalTimeframe }).select().single()
-    if (data) setGoals(prev => [...prev, data])
+    const { data } = await supabase
+      .from('goals')
+      .insert({ user_id: user.id, text: goalInput.trim(), timeframe: goalTimeframe, priority: goalPriority })
+      .select()
+      .single()
+    if (data) setGoals(prev => sortByPriority([...prev, data]))
     setGoalInput('')
+    setGoalPriority('P1')
   }
 
   async function deleteGoal(id: string) {
@@ -249,9 +297,10 @@ export default function Dashboard({ user }: { user: User }) {
           <div style={{ height: '3px', background: 'var(--bg4)', borderRadius: '2px', marginBottom: '20px', overflow: 'hidden' }}>
             <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent)', borderRadius: '2px', transition: 'width 0.4s ease' }} />
           </div>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
             <input value={todayInput} onChange={e => setTodayInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && addTodayTask()}
-              placeholder="Add a task for today..." style={{ flex: 1, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 14px', color: 'var(--text)', fontSize: '0.88rem', outline: 'none' }} />
+              placeholder="Add a task for today..." style={{ flex: 1, minWidth: '160px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 14px', color: 'var(--text)', fontSize: '0.88rem', outline: 'none' }} />
+            <PrioritySelect value={todayPriority} onChange={setTodayPriority} />
             <button onClick={addTodayTask} style={{ background: 'var(--accent)', border: 'none', borderRadius: '10px', padding: '10px 16px', color: '#fff', fontSize: '0.88rem', fontWeight: 500, cursor: 'pointer' }}>+ Add</button>
           </div>
           <TaskList tasks={todayTasks} onToggle={toggleTask} onDelete={deleteTask} />
@@ -272,7 +321,7 @@ export default function Dashboard({ user }: { user: User }) {
             {weekDays.map(day => {
               const dk = dateKey(day)
               const isToday = dk === todayKey
-              const tasks = allTasks.filter(t => t.date === dk)
+              const tasks = sortByPriority(allTasks.filter(t => t.date === dk))
               const done = tasks.filter(t => t.done).length
               const isOpen = openDays.includes(dk)
               return (
@@ -289,10 +338,11 @@ export default function Dashboard({ user }: { user: User }) {
                   </div>
                   {isOpen && (
                     <div style={{ padding: '10px 14px 12px' }}>
-                      <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
                         <input value={weekInputs[dk] || ''} onChange={e => setWeekInputs(prev => ({ ...prev, [dk]: e.target.value }))}
                           onKeyDown={e => e.key === 'Enter' && addWeekTask(dk)} placeholder="Add task..."
-                          style={{ flex: 1, background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--text)', fontSize: '0.82rem', outline: 'none' }} />
+                          style={{ flex: 1, minWidth: '120px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--text)', fontSize: '0.82rem', outline: 'none' }} />
+                        <PrioritySelect value={weekPriorities[dk] || 'P1'} onChange={v => setWeekPriorities(prev => ({ ...prev, [dk]: v }))} />
                         <button onClick={() => addWeekTask(dk)} style={{ background: 'var(--accent)', border: 'none', borderRadius: '8px', padding: '8px 12px', color: '#fff', fontSize: '0.82rem', cursor: 'pointer' }}>+</button>
                       </div>
                       <TaskList tasks={tasks} onToggle={toggleTask} onDelete={deleteTask} />
@@ -327,16 +377,17 @@ export default function Dashboard({ user }: { user: User }) {
               <option>Next 6 months</option>
               <option>This year</option>
             </select>
+            <PrioritySelect value={goalPriority} onChange={setGoalPriority} />
             <button onClick={addGoal} style={{ background: 'var(--accent)', border: 'none', borderRadius: '10px', padding: '10px 16px', color: '#fff', fontSize: '0.88rem', fontWeight: 500, cursor: 'pointer' }}>+ Add</button>
           </div>
           {goals.length === 0
             ? <div style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--text3)', fontSize: '0.85rem', border: '1px dashed var(--border)', borderRadius: '12px' }}>No goals yet — what are you working towards?</div>
             : <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {goals.map(g => (
+              {sortByPriority(goals).map(g => (
                 <div key={g.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '13px 14px' }}
                   onMouseEnter={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '1'}
                   onMouseLeave={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '0'}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--amber)', flexShrink: 0, marginTop: '6px' }} />
+                  <PriorityBadge priority={g.priority} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: '0.9rem', color: 'var(--text)' }}>{g.text}</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text3)', marginTop: '3px' }}>{g.timeframe}</div>
@@ -392,12 +443,13 @@ function TaskList({ tasks, onToggle, onDelete }: { tasks: Task[], onToggle: (id:
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
       {tasks.map(t => (
-        <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '10px', padding: '11px 14px', opacity: t.done ? 0.45 : 1 }}
+        <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '10px', padding: '11px 14px', opacity: t.done ? 0.45 : 1 }}
           onMouseEnter={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '1'}
           onMouseLeave={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '0'}>
           <div onClick={() => onToggle(t.id, t.done)} style={{ width: '18px', height: '18px', borderRadius: '50%', border: `1.5px solid ${t.done ? 'var(--green)' : 'var(--border-hover)'}`, background: t.done ? 'var(--green)' : 'transparent', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {t.done && <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4l2.5 2.5L9 1" stroke="#0a0a0f" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
           </div>
+          <PriorityBadge priority={t.priority || 'P1'} />
           <span style={{ flex: 1, fontSize: '0.88rem', color: 'var(--text)', textDecoration: t.done ? 'line-through' : 'none' }}>{t.text}</span>
           <button className="del" onClick={() => onDelete(t.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px' }}>✕</button>
         </div>
