@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { User } from '@supabase/supabase-js'
+import CalendarView from './calendar'
 
 const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -9,10 +10,7 @@ const SHORT_DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
 
 const PRIORITY_ORDER: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 }
 const PRIORITY_COLORS: Record<string, string> = {
-  P0: '#e05555',
-  P1: '#f0a050',
-  P2: '#7c6af5',
-  P3: '#5a5868',
+  P0: '#e05555', P1: '#f0a050', P2: '#7c6af5', P3: '#5a5868',
 }
 
 function dateKey(d: Date) {
@@ -67,10 +65,10 @@ function PrioritySelect({ value, onChange }: { value: string; onChange: (v: stri
       padding: '8px 10px', color: PRIORITY_COLORS[value], fontSize: '0.82rem',
       outline: 'none', cursor: 'pointer', fontWeight: 600
     }}>
-      <option value="P0" style={{ color: PRIORITY_COLORS['P0'] }}>P0</option>
-      <option value="P1" style={{ color: PRIORITY_COLORS['P1'] }}>P1</option>
-      <option value="P2" style={{ color: PRIORITY_COLORS['P2'] }}>P2</option>
-      <option value="P3" style={{ color: PRIORITY_COLORS['P3'] }}>P3</option>
+      <option value="P0">P0</option>
+      <option value="P1">P1</option>
+      <option value="P2">P2</option>
+      <option value="P3">P3</option>
     </select>
   )
 }
@@ -267,14 +265,14 @@ export default function Dashboard({ user }: { user: User }) {
         )}
 
         {/* Nav */}
-        <div style={{ display: 'flex', gap: '4px', marginTop: '28px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '12px', padding: '4px' }}>
-          {['today', 'week', 'goals', 'journal'].map(tab => (
+        <div style={{ display: 'flex', gap: '4px', marginTop: '28px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '12px', padding: '4px', flexWrap: 'wrap' }}>
+          {['today', 'week', 'goals', 'journal', 'calendar'].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} style={{
-              flex: 1, padding: '9px 12px', border: activeTab === tab ? '1px solid var(--border-hover)' : '1px solid transparent',
+              flex: 1, padding: '9px 10px', border: activeTab === tab ? '1px solid var(--border-hover)' : '1px solid transparent',
               borderRadius: '9px', background: activeTab === tab ? 'var(--bg4)' : 'transparent',
-              color: activeTab === tab ? 'var(--text)' : 'var(--text3)', fontSize: '0.82rem', fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s'
+              color: activeTab === tab ? 'var(--text)' : 'var(--text3)', fontSize: '0.78rem', fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s'
             }}>
-              {tab === 'today' ? 'Today' : tab === 'week' ? 'This Week' : tab === 'goals' ? 'Big Goals' : 'Journal'}
+              {tab === 'today' ? 'Today' : tab === 'week' ? 'This Week' : tab === 'goals' ? 'Big Goals' : tab === 'journal' ? 'Journal' : 'Calendar'}
             </button>
           ))}
         </div>
@@ -434,6 +432,10 @@ export default function Dashboard({ user }: { user: User }) {
           </div>
         </div>
       )}
+
+      {/* CALENDAR */}
+      {activeTab === 'calendar' && <CalendarView user={user} />}
+
     </div>
   )
 }
