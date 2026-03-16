@@ -45,7 +45,7 @@ function sortByPriority<T extends { priority: string }>(items: T[]): T[] {
 
 type Task = { id: string; text: string; done: boolean; date: string; priority: string }
 type Goal = { id: string; text: string; timeframe: string; priority: string; completed: boolean; completed_at: string | null }
-type Journal = { wins: string; tasks_reflection: string; time_reflection: string; improve: string }
+type Journal = { wins: string; tasks_reflection: string; time_reflection: string; improve: string; quick_entry: string }
 type Streak = { current_streak: number; longest_streak: number; last_journal_date: string | null }
 
 function PriorityBadge({ priority }: { priority: string }) {
@@ -83,7 +83,8 @@ export default function Dashboard({ user }: { user: User }) {
   const [activeTab, setActiveTab] = useState('today')
   const [allTasks, setAllTasks] = useState<Task[]>([])
   const [goals, setGoals] = useState<Goal[]>([])
-  const [journal, setJournal] = useState<Journal>({ wins: '', tasks_reflection: '', time_reflection: '', improve: '' })
+  const [journal, setJournal] = useState<Journal>({ wins: '', tasks_reflection: '', time_reflection: '', improve: '', quick_entry: '' })
+  const [journalMode, setJournalMode] = useState<'quick' | 'deep'>('quick')
   const [journalOffset, setJournalOffset] = useState(0)
   const [openDays, setOpenDays] = useState<string[]>([todayKey])
   const [todayInput, setTodayInput] = useState('')
@@ -121,8 +122,13 @@ export default function Dashboard({ user }: { user: User }) {
   }, [user.id, supabase])
 
   const fetchJournal = useCallback(async () => {
-    const { data } = await supabase.from('journal_entries').select('*').eq('user_id', user.id).eq('date', journalKey).single()
-    setJournal(data || { wins: '', tasks_reflection: '', time_reflection: '', improve: '' })
+    const { data } = await supabase
+      .from('journal_entries')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('date', journalKey)
+      .single()
+    setJournal(data || { wins: '', tasks_reflection: '', time_reflection: '', improve: '', quick_entry: '' })
   }, [user.id, journalKey, supabase])
 
   useEffect(() => { fetchAll() }, [fetchAll])
@@ -191,13 +197,18 @@ export default function Dashboard({ user }: { user: User }) {
   }
 
   async function saveJournal() {
+    const hasContent = journalMode === 'quick'
+      ? journal.quick_entry.trim().length > 0
+      : [journal.wins, journal.tasks_reflection, journal.time_reflection, journal.improve].some(f => f.trim().length > 0)
+
     await supabase.from('journal_entries').upsert(
       { user_id: user.id, date: journalKey, ...journal },
       { onConflict: 'user_id,date' }
     )
 
+    // Update streak only if there's actual content and it's today
     const todayStr = dateKey(new Date())
-    if (journalKey === todayStr) {
+    if (journalKey === todayStr && hasContent) {
       const yesterday = new Date()
       yesterday.setDate(yesterday.getDate() - 1)
       const yesterdayStr = dateKey(yesterday)
@@ -290,7 +301,7 @@ export default function Dashboard({ user }: { user: User }) {
               borderRadius: '9px', background: activeTab === tab ? 'var(--bg4)' : 'transparent',
               color: activeTab === tab ? 'var(--text)' : 'var(--text3)', fontSize: '0.78rem', fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s'
             }}>
-              {tab === 'today' ? 'Today' : tab === 'week' ? 'This Week' : tab === 'lists' ? 'Lists' : tab === 'goals' ? 'Big Goals' : tab === 'journal' ? 'Journal' : tab === 'calendar' ? 'Calendar' : 'Maintenance'}
+              {tab === 'today' ? 'Today' : tab === 'week' ? 'This Week' : tab === 'lists' ? 'Lists' : tab === 'maintenance' ? 'Maintenance' : tab === 'goals' ? 'Big Goals' : tab === 'journal' ? 'Journal' : 'Calendar'}
             </button>
           ))}
         </div>
@@ -397,7 +408,6 @@ export default function Dashboard({ user }: { user: User }) {
             <button onClick={addGoal} style={{ background: 'var(--accent)', border: 'none', borderRadius: '10px', padding: '10px 16px', color: '#fff', fontSize: '0.88rem', fontWeight: 500, cursor: 'pointer' }}>+ Add</button>
           </div>
 
-          {/* Active goals */}
           {activeGoals.length === 0
             ? <div style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--text3)', fontSize: '0.85rem', border: '1px dashed var(--border)', borderRadius: '12px' }}>No active goals — what are you working towards?</div>
             : <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -410,23 +420,16 @@ export default function Dashboard({ user }: { user: User }) {
                     <div style={{ fontSize: '0.9rem', color: 'var(--text)' }}>{g.text}</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text3)', marginTop: '3px' }}>{g.timeframe}</div>
                   </div>
-                  <button
-                    onClick={() => completeGoal(g.id)}
-                    style={{ background: 'var(--green-dim)', border: '1px solid rgba(78,202,139,0.2)', borderRadius: '8px', padding: '4px 10px', color: 'var(--green)', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
-                  >✓ Done</button>
+                  <button onClick={() => completeGoal(g.id)} style={{ background: 'var(--green-dim)', border: '1px solid rgba(78,202,139,0.2)', borderRadius: '8px', padding: '4px 10px', color: 'var(--green)', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>✓ Done</button>
                   <button className="del" onClick={() => deleteGoal(g.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px' }}>✕</button>
                 </div>
               ))}
             </div>
           }
 
-          {/* Achieved section */}
           {achievedGoals.length > 0 && (
             <div style={{ marginTop: '28px' }}>
-              <div
-                onClick={() => setShowAchieved(p => !p)}
-                style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', marginBottom: '12px' }}
-              >
+              <div onClick={() => setShowAchieved(p => !p)} style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', marginBottom: '12px' }}>
                 <div style={{ height: '1px', flex: 1, background: 'var(--border)' }} />
                 <span style={{ fontSize: '0.78rem', color: 'var(--text3)', fontWeight: 500, whiteSpace: 'nowrap' }}>
                   🏆 {achievedGoals.length} achieved {showAchieved ? '▴' : '▾'}
@@ -446,10 +449,7 @@ export default function Dashboard({ user }: { user: User }) {
                           {g.completed_at ? `Completed ${new Date(g.completed_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : g.timeframe}
                         </div>
                       </div>
-                      <button
-                        onClick={() => uncompleteGoal(g.id)}
-                        style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: '8px', padding: '4px 10px', color: 'var(--text3)', fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
-                      >Reopen</button>
+                      <button onClick={() => uncompleteGoal(g.id)} style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: '8px', padding: '4px 10px', color: 'var(--text3)', fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>Reopen</button>
                       <button className="del" onClick={() => deleteGoal(g.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px' }}>✕</button>
                     </div>
                   ))}
@@ -468,26 +468,62 @@ export default function Dashboard({ user }: { user: User }) {
               <div style={{ fontFamily: 'var(--font-syne)', fontSize: '1.1rem', fontWeight: 700 }}>Daily Journal</div>
               <div style={{ fontSize: '0.78rem', color: 'var(--text3)', marginTop: '2px' }}>Reflect on your day</div>
             </div>
-            <span style={{ fontSize: '0.72rem', fontWeight: 500, padding: '3px 10px', borderRadius: '20px', background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid rgba(124,106,245,0.2)' }}>Log</span>
+            {/* Mode toggle */}
+            <div style={{ display: 'flex', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '3px', gap: '3px' }}>
+              {(['quick', 'deep'] as const).map(mode => (
+                <button key={mode} onClick={() => setJournalMode(mode)} style={{
+                  padding: '5px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 500, transition: 'all 0.2s',
+                  background: journalMode === mode ? 'var(--bg4)' : 'transparent',
+                  color: journalMode === mode ? 'var(--text)' : 'var(--text3)',
+                }}>
+                  {mode === 'quick' ? 'Quick' : 'Deep'}
+                </button>
+              ))}
+            </div>
           </div>
+
+          {/* Date navigation */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
             <button onClick={() => setJournalOffset(p => p - 1)} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text2)', cursor: 'pointer', padding: '6px 12px', fontSize: '14px' }}>←</button>
             <div style={{ flex: 1, textAlign: 'center', fontFamily: 'var(--font-syne)', fontSize: '0.85rem', fontWeight: 700, color: 'var(--text2)' }}>{formatDisplay(journalDate)}</div>
             <button onClick={() => setJournalOffset(p => p + 1)} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text2)', cursor: 'pointer', padding: '6px 12px', fontSize: '14px' }}>→</button>
           </div>
-          {[
-            { key: 'wins', label: 'What did I accomplish today?' },
-            { key: 'tasks_reflection', label: 'Did I complete my tasks?' },
-            { key: 'time_reflection', label: 'How did I spend my time?' },
-            { key: 'improve', label: "What's one thing to improve tomorrow?" },
-          ].map(({ key, label }) => (
-            <div key={key} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', marginBottom: '12px' }}>
-              <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontFamily: 'var(--font-syne)', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{label}</div>
-              <textarea value={journal[key as keyof Journal]} onChange={e => setJournal(prev => ({ ...prev, [key]: e.target.value }))}
-                placeholder="Write here..." rows={3}
-                style={{ width: '100%', background: 'transparent', border: 'none', padding: '12px 14px', color: 'var(--text)', fontSize: '0.88rem', lineHeight: 1.7, resize: 'none', outline: 'none' }} />
+
+          {/* Quick mode */}
+          {journalMode === 'quick' && (
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', marginBottom: '12px' }}>
+              <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontFamily: 'var(--font-syne)', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                How was your day?
+              </div>
+              <textarea
+                value={journal.quick_entry}
+                onChange={e => setJournal(prev => ({ ...prev, quick_entry: e.target.value }))}
+                placeholder="Write anything — 2 lines or 2 pages, whatever feels right..."
+                rows={6}
+                style={{ width: '100%', background: 'transparent', border: 'none', padding: '12px 14px', color: 'var(--text)', fontSize: '0.88rem', lineHeight: 1.7, resize: 'none', outline: 'none' }}
+              />
             </div>
-          ))}
+          )}
+
+          {/* Deep mode */}
+          {journalMode === 'deep' && (
+            <>
+              {[
+                { key: 'wins', label: 'What did I accomplish today?' },
+                { key: 'tasks_reflection', label: 'Did I complete my tasks?' },
+                { key: 'time_reflection', label: 'How did I spend my time?' },
+                { key: 'improve', label: "What's one thing to improve tomorrow?" },
+              ].map(({ key, label }) => (
+                <div key={key} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', marginBottom: '12px' }}>
+                  <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontFamily: 'var(--font-syne)', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{label}</div>
+                  <textarea value={journal[key as keyof Journal]} onChange={e => setJournal(prev => ({ ...prev, [key]: e.target.value }))}
+                    placeholder="Write here..." rows={3}
+                    style={{ width: '100%', background: 'transparent', border: 'none', padding: '12px 14px', color: 'var(--text)', fontSize: '0.88rem', lineHeight: 1.7, resize: 'none', outline: 'none' }} />
+                </div>
+              ))}
+            </>
+          )}
+
           <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px' }}>
             {saveStatus && <span style={{ fontSize: '0.78rem', color: 'var(--green)' }}>Saved ✓</span>}
             <button onClick={saveJournal} style={{ background: 'var(--bg3)', border: '1px solid var(--border-hover)', borderRadius: '8px', padding: '8px 20px', color: 'var(--text)', fontSize: '0.82rem', fontWeight: 500, cursor: 'pointer' }}>Save Entry</button>
