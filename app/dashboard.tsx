@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { User } from '@supabase/supabase-js'
 import CalendarView from './calendar'
+import ListsView from './lists'
 
 const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -266,13 +267,13 @@ export default function Dashboard({ user }: { user: User }) {
 
         {/* Nav */}
         <div style={{ display: 'flex', gap: '4px', marginTop: '28px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '12px', padding: '4px', flexWrap: 'wrap' }}>
-          {['today', 'week', 'goals', 'journal', 'calendar'].map(tab => (
+          {['today', 'week', 'lists', 'goals', 'journal', 'calendar'].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} style={{
               flex: 1, padding: '9px 10px', border: activeTab === tab ? '1px solid var(--border-hover)' : '1px solid transparent',
               borderRadius: '9px', background: activeTab === tab ? 'var(--bg4)' : 'transparent',
               color: activeTab === tab ? 'var(--text)' : 'var(--text3)', fontSize: '0.78rem', fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s'
             }}>
-              {tab === 'today' ? 'Today' : tab === 'week' ? 'This Week' : tab === 'goals' ? 'Big Goals' : tab === 'journal' ? 'Journal' : 'Calendar'}
+              {tab === 'today' ? 'Today' : tab === 'week' ? 'This Week' : tab === 'goals' ? 'Big Goals' : tab === 'journal' ? 'Journal' : tab === 'calendar' ? 'Calendar' : 'Lists'}
             </button>
           ))}
         </div>
@@ -435,6 +436,9 @@ export default function Dashboard({ user }: { user: User }) {
 
       {/* CALENDAR */}
       {activeTab === 'calendar' && <CalendarView user={user} />}
+
+      {/* LISTS */}
+      {activeTab === 'lists' && <ListsView user={user} />}
 
     </div>
   )
