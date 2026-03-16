@@ -44,7 +44,7 @@ function sortByPriority<T extends { priority: string }>(items: T[]): T[] {
 }
 
 type Task = { id: string; text: string; done: boolean; date: string; priority: string }
-type Goal = { id: string; text: string; timeframe: string; priority: string }
+type Goal = { id: string; text: string; timeframe: string; priority: string; completed: boolean; completed_at: string | null }
 type Journal = { wins: string; tasks_reflection: string; time_reflection: string; improve: string }
 type Streak = { current_streak: number; longest_streak: number; last_journal_date: string | null }
 
@@ -93,6 +93,7 @@ export default function Dashboard({ user }: { user: User }) {
   const [goalInput, setGoalInput] = useState('')
   const [goalTimeframe, setGoalTimeframe] = useState('This month')
   const [goalPriority, setGoalPriority] = useState('P1')
+  const [showAchieved, setShowAchieved] = useState(false)
   const [saveStatus, setSaveStatus] = useState(false)
   const [loading, setLoading] = useState(true)
   const [streak, setStreak] = useState<Streak>({ current_streak: 0, longest_streak: 0, last_journal_date: null })
@@ -102,6 +103,10 @@ export default function Dashboard({ user }: { user: User }) {
   const journalKey = dateKey(journalDate)
 
   const todayTasks = sortByPriority(allTasks.filter(t => t.date === todayKey))
+  const activeGoals = sortByPriority(goals.filter(g => !g.completed))
+  const achievedGoals = goals.filter(g => g.completed).sort((a, b) =>
+    new Date(b.completed_at || 0).getTime() - new Date(a.completed_at || 0).getTime()
+  )
 
   const fetchAll = useCallback(async () => {
     const [wt, g, st] = await Promise.all([
@@ -161,12 +166,23 @@ export default function Dashboard({ user }: { user: User }) {
     if (!goalInput.trim()) return
     const { data } = await supabase
       .from('goals')
-      .insert({ user_id: user.id, text: goalInput.trim(), timeframe: goalTimeframe, priority: goalPriority })
+      .insert({ user_id: user.id, text: goalInput.trim(), timeframe: goalTimeframe, priority: goalPriority, completed: false })
       .select()
       .single()
-    if (data) setGoals(prev => sortByPriority([...prev, data]))
+    if (data) setGoals(prev => [...prev, data])
     setGoalInput('')
     setGoalPriority('P1')
+  }
+
+  async function completeGoal(id: string) {
+    const completedAt = new Date().toISOString()
+    await supabase.from('goals').update({ completed: true, completed_at: completedAt }).eq('id', id)
+    setGoals(prev => prev.map(g => g.id === id ? { ...g, completed: true, completed_at: completedAt } : g))
+  }
+
+  async function uncompleteGoal(id: string) {
+    await supabase.from('goals').update({ completed: false, completed_at: null }).eq('id', id)
+    setGoals(prev => prev.map(g => g.id === id ? { ...g, completed: false, completed_at: null } : g))
   }
 
   async function deleteGoal(id: string) {
@@ -268,7 +284,7 @@ export default function Dashboard({ user }: { user: User }) {
 
         {/* Nav */}
         <div style={{ display: 'flex', gap: '4px', marginTop: '28px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '12px', padding: '4px', flexWrap: 'wrap' }}>
-          {['today', 'week', 'lists', 'goals', 'maintenance', 'journal', 'calendar'].map(tab => (
+          {['today', 'week', 'lists', 'maintenance', 'goals', 'journal', 'calendar'].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} style={{
               flex: 1, padding: '9px 10px', border: activeTab === tab ? '1px solid var(--border-hover)' : '1px solid transparent',
               borderRadius: '9px', background: activeTab === tab ? 'var(--bg4)' : 'transparent',
@@ -364,7 +380,7 @@ export default function Dashboard({ user }: { user: User }) {
               <div style={{ fontSize: '0.78rem', color: 'var(--text3)', marginTop: '2px' }}>What you&apos;re building towards</div>
             </div>
             <span style={{ fontSize: '0.72rem', fontWeight: 500, padding: '3px 10px', borderRadius: '20px', background: 'var(--amber-dim)', color: 'var(--amber)', border: '1px solid rgba(240,160,80,0.2)' }}>
-              {goals.length} {goals.length === 1 ? 'goal' : 'goals'}
+              {activeGoals.length} active
             </span>
           </div>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
@@ -380,10 +396,12 @@ export default function Dashboard({ user }: { user: User }) {
             <PrioritySelect value={goalPriority} onChange={setGoalPriority} />
             <button onClick={addGoal} style={{ background: 'var(--accent)', border: 'none', borderRadius: '10px', padding: '10px 16px', color: '#fff', fontSize: '0.88rem', fontWeight: 500, cursor: 'pointer' }}>+ Add</button>
           </div>
-          {goals.length === 0
-            ? <div style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--text3)', fontSize: '0.85rem', border: '1px dashed var(--border)', borderRadius: '12px' }}>No goals yet — what are you working towards?</div>
+
+          {/* Active goals */}
+          {activeGoals.length === 0
+            ? <div style={{ textAlign: 'center', padding: '36px 20px', color: 'var(--text3)', fontSize: '0.85rem', border: '1px dashed var(--border)', borderRadius: '12px' }}>No active goals — what are you working towards?</div>
             : <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {sortByPriority(goals).map(g => (
+              {activeGoals.map(g => (
                 <div key={g.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '13px 14px' }}
                   onMouseEnter={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '1'}
                   onMouseLeave={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '0'}>
@@ -392,11 +410,53 @@ export default function Dashboard({ user }: { user: User }) {
                     <div style={{ fontSize: '0.9rem', color: 'var(--text)' }}>{g.text}</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text3)', marginTop: '3px' }}>{g.timeframe}</div>
                   </div>
+                  <button
+                    onClick={() => completeGoal(g.id)}
+                    style={{ background: 'var(--green-dim)', border: '1px solid rgba(78,202,139,0.2)', borderRadius: '8px', padding: '4px 10px', color: 'var(--green)', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                  >✓ Done</button>
                   <button className="del" onClick={() => deleteGoal(g.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px' }}>✕</button>
                 </div>
               ))}
             </div>
           }
+
+          {/* Achieved section */}
+          {achievedGoals.length > 0 && (
+            <div style={{ marginTop: '28px' }}>
+              <div
+                onClick={() => setShowAchieved(p => !p)}
+                style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', marginBottom: '12px' }}
+              >
+                <div style={{ height: '1px', flex: 1, background: 'var(--border)' }} />
+                <span style={{ fontSize: '0.78rem', color: 'var(--text3)', fontWeight: 500, whiteSpace: 'nowrap' }}>
+                  🏆 {achievedGoals.length} achieved {showAchieved ? '▴' : '▾'}
+                </span>
+                <div style={{ height: '1px', flex: 1, background: 'var(--border)' }} />
+              </div>
+              {showAchieved && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {achievedGoals.map(g => (
+                    <div key={g.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '13px 14px', opacity: 0.6 }}
+                      onMouseEnter={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '1'}
+                      onMouseLeave={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '0'}>
+                      <span style={{ fontSize: '14px', flexShrink: 0 }}>✓</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '0.9rem', color: 'var(--text)', textDecoration: 'line-through' }}>{g.text}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text3)', marginTop: '3px' }}>
+                          {g.completed_at ? `Completed ${new Date(g.completed_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : g.timeframe}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => uncompleteGoal(g.id)}
+                        style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: '8px', padding: '4px 10px', color: 'var(--text3)', fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      >Reopen</button>
+                      <button className="del" onClick={() => deleteGoal(g.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
