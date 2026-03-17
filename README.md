@@ -161,8 +161,3 @@ fix/issue-name      — bug fixes
 - [ ] Mobile app (PWA) — installable on phone home screen
 - [ ] Daily reminder notifications
 
----
-
-## Built With
-
-Built entirely using [Claude](https://claude.ai) — designed, architected, and coded through conversation.
