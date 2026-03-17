@@ -15,6 +15,7 @@ export default function ListsView({ user }: { user: User }) {
   const [newListName, setNewListName] = useState('')
   const [newItemText, setNewItemText] = useState('')
   const [showNewList, setShowNewList] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   const fetchAll = useCallback(async () => {
@@ -56,6 +57,7 @@ export default function ListsView({ user }: { user: User }) {
       const remaining = lists.filter(l => l.id !== id)
       setActiveList(remaining.length > 0 ? remaining[0].id : null)
     }
+    setConfirmDeleteId(null)
   }
 
   async function addItem() {
@@ -99,6 +101,20 @@ export default function ListsView({ user }: { user: User }) {
         </button>
       </div>
 
+      {/* Confirm delete dialog */}
+      {confirmDeleteId && (
+        <div style={{ background: 'var(--bg2)', border: '1px solid rgba(224,85,85,0.3)', borderRadius: '12px', padding: '16px 18px', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: '0.88rem', fontWeight: 500, color: 'var(--text)' }}>Delete &quot;{lists.find(l => l.id === confirmDeleteId)?.name}&quot;?</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text3)', marginTop: '3px' }}>This will permanently delete the list and all its items.</div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={() => setConfirmDeleteId(null)} style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '8px', padding: '7px 14px', color: 'var(--text2)', fontSize: '0.82rem', cursor: 'pointer' }}>Cancel</button>
+            <button onClick={() => deleteList(confirmDeleteId)} style={{ background: 'rgba(224,85,85,0.15)', border: '1px solid rgba(224,85,85,0.3)', borderRadius: '8px', padding: '7px 14px', color: 'var(--red)', fontSize: '0.82rem', fontWeight: 500, cursor: 'pointer' }}>Delete</button>
+          </div>
+        </div>
+      )}
+
       {/* New list input */}
       {showNewList && (
         <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
@@ -121,7 +137,6 @@ export default function ListsView({ user }: { user: User }) {
         </div>
       ) : (
         <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
-
           {/* List sidebar */}
           <div style={{ width: '200px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {lists.map(l => {
@@ -131,25 +146,17 @@ export default function ListsView({ user }: { user: User }) {
               return (
                 <div key={l.id}
                   onClick={() => setActiveList(l.id)}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '10px 12px', borderRadius: '10px', cursor: 'pointer',
-                    background: isActive ? 'var(--bg4)' : 'var(--bg2)',
-                    border: `1px solid ${isActive ? 'var(--border-hover)' : 'var(--border)'}`,
-                    transition: 'all 0.15s'
-                  }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderRadius: '10px', cursor: 'pointer', background: isActive ? 'var(--bg4)' : 'var(--bg2)', border: `1px solid ${isActive ? 'var(--border-hover)' : 'var(--border)'}`, transition: 'all 0.15s' }}
                   onMouseEnter={e => (e.currentTarget.querySelector('.list-del') as HTMLElement).style.opacity = '1'}
                   onMouseLeave={e => (e.currentTarget.querySelector('.list-del') as HTMLElement).style.opacity = '0'}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: '0.85rem', fontWeight: 500, color: isActive ? 'var(--text)' : 'var(--text2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.name}</div>
-                    {count > 0 && (
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text3)', marginTop: '2px' }}>{done}/{count} done</div>
-                    )}
+                    {count > 0 && <div style={{ fontSize: '0.72rem', color: 'var(--text3)', marginTop: '2px' }}>{done}/{count} done</div>}
                   </div>
                   <button
                     className="list-del"
-                    onClick={e => { e.stopPropagation(); deleteList(l.id) }}
+                    onClick={e => { e.stopPropagation(); setConfirmDeleteId(l.id) }}
                     style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '14px', flexShrink: 0, marginLeft: '4px' }}
                   >✕</button>
                 </div>
@@ -162,9 +169,7 @@ export default function ListsView({ user }: { user: User }) {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
               <div>
                 <div style={{ fontFamily: 'var(--font-syne)', fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)' }}>{activeListName}</div>
-                {activeItems.length > 0 && (
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text3)', marginTop: '2px' }}>{doneCount} of {activeItems.length} done</div>
-                )}
+                {activeItems.length > 0 && <div style={{ fontSize: '0.75rem', color: 'var(--text3)', marginTop: '2px' }}>{doneCount} of {activeItems.length} done</div>}
               </div>
               {activeItems.length > 0 && (
                 <span style={{ fontSize: '0.72rem', fontWeight: 500, padding: '3px 10px', borderRadius: '20px', background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid rgba(124,106,245,0.2)' }}>
