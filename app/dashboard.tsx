@@ -213,6 +213,11 @@ export default function Dashboard({ user }: { user: User }) {
     setAllTasks(prev => prev.map(t => t.id === id ? { ...t, done: !done } : t))
   }
 
+  async function updateTask(id: string, text: string, priority: string, goalId: string | null) {
+    await supabase.from('week_tasks').update({ text, priority, goal_id: goalId || null }).eq('id', id)
+    setAllTasks(prev => prev.map(t => t.id === id ? { ...t, text, priority, goal_id: goalId || null } : t))
+  }
+
   async function deleteTask(id: string) {
     await supabase.from('week_tasks').delete().eq('id', id)
     setAllTasks(prev => prev.filter(t => t.id !== id))
@@ -389,7 +394,7 @@ export default function Dashboard({ user }: { user: User }) {
             {activeGoals.length > 0 && <GoalSelect value={todayGoalId} onChange={setTodayGoalId} goals={activeGoals} />}
             <button onClick={addTodayTask} style={{ background: 'var(--accent)', border: 'none', borderRadius: '10px', padding: '10px 16px', color: '#fff', fontSize: '0.88rem', fontWeight: 500, cursor: 'pointer' }}>+ Add</button>
           </div>
-          <TaskList tasks={todayTasks} onToggle={toggleTask} onDelete={deleteTask} goals={activeGoals} />
+          <TaskList tasks={todayTasks} onToggle={toggleTask} onDelete={deleteTask} onUpdate={updateTask} goals={activeGoals} />
         </div>
       )}
 
@@ -432,7 +437,7 @@ export default function Dashboard({ user }: { user: User }) {
                         {activeGoals.length > 0 && <GoalSelect value={weekGoalIds[dk] || ''} onChange={v => setWeekGoalIds(prev => ({ ...prev, [dk]: v }))} goals={activeGoals} />}
                         <button onClick={() => addWeekTask(dk)} style={{ background: 'var(--accent)', border: 'none', borderRadius: '8px', padding: '8px 12px', color: '#fff', fontSize: '0.82rem', cursor: 'pointer' }}>+</button>
                       </div>
-                      <TaskList tasks={tasks} onToggle={toggleTask} onDelete={deleteTask} goals={activeGoals} />
+                      <TaskList tasks={tasks} onToggle={toggleTask} onDelete={deleteTask} onUpdate={updateTask} goals={activeGoals} />
                     </div>
                   )}
                 </div>
@@ -484,9 +489,7 @@ export default function Dashboard({ user }: { user: User }) {
                       <div style={{ display: 'flex', gap: '10px', marginTop: '4px', flexWrap: 'wrap' }}>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>{g.timeframe}</div>
                         {linkedTasks.length > 0 && (
-                          <div style={{ fontSize: '0.75rem', color: 'var(--accent)' }}>
-                            {linkedDone}/{linkedTasks.length} tasks linked
-                          </div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--accent)' }}>{linkedDone}/{linkedTasks.length} tasks linked</div>
                         )}
                       </div>
                     </div>
@@ -658,37 +661,112 @@ export default function Dashboard({ user }: { user: User }) {
   )
 }
 
-function TaskList({ tasks, onToggle, onDelete, goals }: {
+function TaskList({ tasks, onToggle, onDelete, onUpdate, goals }: {
   tasks: Task[]
   onToggle: (id: string, done: boolean) => void
   onDelete: (id: string) => void
+  onUpdate: (id: string, text: string, priority: string, goalId: string | null) => void
   goals: { id: string; text: string }[]
 }) {
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editText, setEditText] = useState('')
+  const [editPriority, setEditPriority] = useState('P1')
+  const [editGoalId, setEditGoalId] = useState('')
+
+  function openEdit(t: Task) {
+    setEditingId(t.id)
+    setEditText(t.text)
+    setEditPriority(t.priority || 'P1')
+    setEditGoalId(t.goal_id || '')
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditText('')
+    setEditPriority('P1')
+    setEditGoalId('')
+  }
+
+  async function saveEdit(id: string) {
+    if (!editText.trim()) return
+    await onUpdate(id, editText.trim(), editPriority, editGoalId || null)
+    cancelEdit()
+  }
+
   if (!tasks.length) return <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)', fontSize: '0.82rem', border: '1px dashed var(--border)', borderRadius: '10px' }}>No tasks yet</div>
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-      {tasks.map(t => {
-        const linkedGoal = t.goal_id ? goals.find(g => g.id === t.goal_id) : null
-        return (
-          <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '10px', padding: '11px 14px', opacity: t.done ? 0.45 : 1 }}
-            onMouseEnter={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '1'}
-            onMouseLeave={e => (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '0'}>
+      {tasks.map(t => (
+        <div key={t.id}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--bg3)', border: `1px solid ${editingId === t.id ? 'var(--accent)' : 'var(--border)'}`, borderRadius: editingId === t.id ? '10px 10px 0 0' : '10px', padding: '11px 14px', opacity: t.done ? 0.45 : 1 }}
+            onMouseEnter={e => { (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '1'; (e.currentTarget.querySelector('.edit-btn') as HTMLElement).style.opacity = '1' }}
+            onMouseLeave={e => { (e.currentTarget.querySelector('.del') as HTMLElement).style.opacity = '0'; (e.currentTarget.querySelector('.edit-btn') as HTMLElement).style.opacity = '0' }}>
             <div onClick={() => onToggle(t.id, t.done)} style={{ width: '18px', height: '18px', borderRadius: '50%', border: `1.5px solid ${t.done ? 'var(--green)' : 'var(--border-hover)'}`, background: t.done ? 'var(--green)' : 'transparent', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {t.done && <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4l2.5 2.5L9 1" stroke="#0a0a0f" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
             </div>
             <PriorityBadge priority={t.priority || 'P1'} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: '0.88rem', color: 'var(--text)', textDecoration: t.done ? 'line-through' : 'none' }}>{t.text}</div>
-              {linkedGoal && (
+              {t.goal_id && goals.find(g => g.id === t.goal_id) && (
                 <div style={{ fontSize: '0.72rem', color: 'var(--accent)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  ↳ {linkedGoal.text}
+                  ↳ {goals.find(g => g.id === t.goal_id)?.text}
                 </div>
               )}
             </div>
-            <button className="del" onClick={() => onDelete(t.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px' }}>✕</button>
+            <button className="edit-btn" onClick={() => editingId === t.id ? cancelEdit() : openEdit(t)}
+              style={{ background: 'transparent', border: 'none', color: editingId === t.id ? 'var(--accent)' : 'var(--text3)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '14px', flexShrink: 0, padding: '0 2px' }}>✎</button>
+            <button className="del" onClick={() => onDelete(t.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px', flexShrink: 0 }}>✕</button>
           </div>
-        )
-      })}
+
+          {/* Edit panel */}
+          {editingId === t.id && (
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--accent)', borderTop: 'none', borderRadius: '0 0 10px 10px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text3)', marginBottom: '5px', fontWeight: 500 }}>Rename</div>
+                <input
+                  value={editText}
+                  onChange={e => setEditText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveEdit(t.id); if (e.key === 'Escape') cancelEdit() }}
+                  style={{ width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px 12px', color: 'var(--text)', fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: '120px' }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text3)', marginBottom: '5px', fontWeight: 500 }}>{t.priority ? 'Edit priority' : 'Set priority'}</div>
+                  <select value={editPriority} onChange={e => setEditPriority(e.target.value)} style={{
+                    width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '8px',
+                    padding: '8px 10px', color: PRIORITY_COLORS[editPriority], fontSize: '0.82rem', outline: 'none', cursor: 'pointer', fontWeight: 600
+                  }}>
+                    <option value="P0">P0</option>
+                    <option value="P1">P1</option>
+                    <option value="P2">P2</option>
+                    <option value="P3">P3</option>
+                  </select>
+                </div>
+                {goals.length > 0 && (
+                  <div style={{ flex: 2, minWidth: '140px' }}>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text3)', marginBottom: '5px', fontWeight: 500 }}>{t.goal_id ? 'Edit goal' : 'Link to goal'}</div>
+                    <select value={editGoalId} onChange={e => setEditGoalId(e.target.value)} style={{
+                      width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '8px',
+                      padding: '8px 10px', color: 'var(--text2)', fontSize: '0.82rem', outline: 'none', cursor: 'pointer'
+                    }}>
+                      <option value="">No goal</option>
+                      {goals.map(g => (
+                        <option key={g.id} value={g.id}>{g.text.length > 30 ? g.text.slice(0, 30) + '…' : g.text}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button onClick={cancelEdit} style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: '8px', padding: '6px 14px', color: 'var(--text3)', fontSize: '0.78rem', cursor: 'pointer' }}>Cancel</button>
+                <button onClick={() => saveEdit(t.id)} style={{ background: 'var(--accent)', border: 'none', borderRadius: '8px', padding: '6px 14px', color: '#fff', fontSize: '0.78rem', fontWeight: 500, cursor: 'pointer' }}>Save</button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

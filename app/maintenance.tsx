@@ -53,12 +53,19 @@ function getStatusLabel(daysUntil: number | null, lastDone: string | null): stri
   return `Due in ${daysUntil} days`
 }
 
+function todayStr(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+}
+
 export default function MaintenanceView({ user }: { user: User }) {
   const supabase = createClient()
 
   const [tasks, setTasks] = useState<MaintenanceTask[]>([])
   const [newName, setNewName] = useState('')
   const [newFrequency, setNewFrequency] = useState('Monthly')
+  const [customDateId, setCustomDateId] = useState<string | null>(null)
+  const [customDate, setCustomDate] = useState('')
   const [loading, setLoading] = useState(true)
 
   const fetchTasks = useCallback(async () => {
@@ -86,10 +93,17 @@ export default function MaintenanceView({ user }: { user: User }) {
   }
 
   async function markDone(id: string) {
-    const today = new Date()
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`
-    await supabase.from('maintenance_tasks').update({ last_done: todayStr }).eq('id', id)
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, last_done: todayStr } : t))
+    const today = todayStr()
+    await supabase.from('maintenance_tasks').update({ last_done: today }).eq('id', id)
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, last_done: today } : t))
+  }
+
+  async function setCustomLastDone(id: string) {
+    if (!customDate) return
+    await supabase.from('maintenance_tasks').update({ last_done: customDate }).eq('id', id)
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, last_done: customDate } : t))
+    setCustomDateId(null)
+    setCustomDate('')
   }
 
   async function deleteTask(id: string) {
@@ -97,7 +111,6 @@ export default function MaintenanceView({ user }: { user: User }) {
     setTasks(prev => prev.filter(t => t.id !== id))
   }
 
-  // Sort — overdue/never done first, then by days until due
   const sortedTasks = [...tasks].sort((a, b) => {
     const da = getDaysUntilDue(a.last_done, a.frequency) ?? -999
     const db = getDaysUntilDue(b.last_done, b.frequency) ?? -999
@@ -129,7 +142,6 @@ export default function MaintenanceView({ user }: { user: User }) {
         )}
       </div>
 
-      {/* Add task row */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
         <input
           value={newName}
@@ -143,9 +155,7 @@ export default function MaintenanceView({ user }: { user: User }) {
           onChange={e => setNewFrequency(e.target.value)}
           style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 12px', color: 'var(--text2)', fontSize: '0.85rem', outline: 'none', cursor: 'pointer' }}
         >
-          {Object.keys(FREQUENCY_DAYS).map(f => (
-            <option key={f}>{f}</option>
-          ))}
+          {Object.keys(FREQUENCY_DAYS).map(f => <option key={f}>{f}</option>)}
         </select>
         <button onClick={addTask} style={{ background: 'var(--accent)', border: 'none', borderRadius: '10px', padding: '10px 16px', color: '#fff', fontSize: '0.88rem', fontWeight: 500, cursor: 'pointer' }}>+ Add</button>
       </div>
@@ -162,66 +172,76 @@ export default function MaintenanceView({ user }: { user: User }) {
             const statusLabel = getStatusLabel(daysUntil, task.last_done)
             const nextDue = getNextDue(task.last_done, task.frequency)
             const isOverdue = !task.last_done || (daysUntil !== null && daysUntil <= 0)
+            const isSettingDate = customDateId === task.id
 
             return (
-              <div
-                key={task.id}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '14px',
-                  background: 'var(--bg2)',
-                  border: `1px solid ${isOverdue ? 'rgba(224,85,85,0.25)' : 'var(--border)'}`,
-                  borderRadius: '12px', padding: '14px 16px',
-                  transition: 'border-color 0.2s'
-                }}
-                onMouseEnter={e => (e.currentTarget.querySelector('.m-del') as HTMLElement).style.opacity = '1'}
-                onMouseLeave={e => (e.currentTarget.querySelector('.m-del') as HTMLElement).style.opacity = '0'}
-              >
-                {/* Status dot */}
-                <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: statusColor, flexShrink: 0 }} />
+              <div key={task.id} style={{ background: 'var(--bg2)', border: `1px solid ${isOverdue ? 'rgba(224,85,85,0.25)' : 'var(--border)'}`, borderRadius: '12px', overflow: 'hidden' }}>
+                <div
+                  style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px' }}
+                  onMouseEnter={e => (e.currentTarget.querySelector('.m-del') as HTMLElement).style.opacity = '1'}
+                  onMouseLeave={e => (e.currentTarget.querySelector('.m-del') as HTMLElement).style.opacity = '0'}
+                >
+                  <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: statusColor, flexShrink: 0 }} />
 
-                {/* Task info */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '0.9rem', fontWeight: 500, color: 'var(--text)', marginBottom: '4px' }}>{task.name}</div>
-                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>{task.frequency}</span>
-                    {task.last_done && (
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>
-                        Last done: {new Date(task.last_done + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                      </span>
-                    )}
-                    {nextDue && (
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>
-                        Next due: {nextDue.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                      </span>
-                    )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.9rem', fontWeight: 500, color: 'var(--text)', marginBottom: '4px' }}>{task.name}</div>
+                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>{task.frequency}</span>
+                      {task.last_done && (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>
+                          Last done: {new Date(task.last_done + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                      )}
+                      {nextDue && (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>
+                          Next due: {nextDue.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                      )}
+                    </div>
                   </div>
+
+                  <span style={{ fontSize: '0.72rem', fontWeight: 500, padding: '3px 10px', borderRadius: '20px', background: statusColor + '18', color: statusColor, border: `1px solid ${statusColor}33`, whiteSpace: 'nowrap', flexShrink: 0 }}>{statusLabel}</span>
+
+                  <button
+                    onClick={() => markDone(task.id)}
+                    style={{ background: 'var(--bg3)', border: '1px solid var(--border-hover)', borderRadius: '8px', padding: '6px 12px', color: 'var(--text2)', fontSize: '0.78rem', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--green)'; (e.currentTarget as HTMLElement).style.color = 'var(--green)' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-hover)'; (e.currentTarget as HTMLElement).style.color = 'var(--text2)' }}
+                  >
+                    Done today
+                  </button>
+
+                  <button
+                    onClick={() => { setCustomDateId(isSettingDate ? null : task.id); setCustomDate(task.last_done || todayStr()) }}
+                    style={{ background: 'var(--bg3)', border: '1px solid var(--border-hover)', borderRadius: '8px', padding: '6px 12px', color: 'var(--text2)', fontSize: '0.78rem', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                  >
+                    Set date
+                  </button>
+
+                  <button className="m-del" onClick={() => deleteTask(task.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px', flexShrink: 0 }}>✕</button>
                 </div>
 
-                {/* Status badge */}
-                <span style={{
-                  fontSize: '0.72rem', fontWeight: 500, padding: '3px 10px', borderRadius: '20px',
-                  background: statusColor + '18',
-                  color: statusColor,
-                  border: `1px solid ${statusColor}33`,
-                  whiteSpace: 'nowrap', flexShrink: 0
-                }}>{statusLabel}</span>
-
-                {/* Mark done button */}
-                <button
-                  onClick={() => markDone(task.id)}
-                  style={{
-                    background: 'var(--bg3)', border: '1px solid var(--border-hover)', borderRadius: '8px',
-                    padding: '6px 12px', color: 'var(--text2)', fontSize: '0.78rem', fontWeight: 500,
-                    cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
-                    transition: 'border-color 0.15s, color 0.15s'
-                  }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--green)'; (e.currentTarget as HTMLElement).style.color = 'var(--green)' }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-hover)'; (e.currentTarget as HTMLElement).style.color = 'var(--text2)' }}
-                >
-                  Mark done
-                </button>
-
-                <button className="m-del" onClick={() => deleteTask(task.id)} style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s', fontSize: '16px', flexShrink: 0 }}>✕</button>
+                {/* Custom date picker */}
+                {isSettingDate && (
+                  <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--bg3)', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.82rem', color: 'var(--text3)' }}>Last done on:</span>
+                    <input
+                      type="date"
+                      value={customDate}
+                      max={todayStr()}
+                      onChange={e => setCustomDate(e.target.value)}
+                      style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '8px', padding: '6px 10px', color: 'var(--text)', fontSize: '0.82rem', outline: 'none', cursor: 'pointer' }}
+                    />
+                    <button
+                      onClick={() => setCustomLastDone(task.id)}
+                      style={{ background: 'var(--accent)', border: 'none', borderRadius: '8px', padding: '6px 14px', color: '#fff', fontSize: '0.82rem', fontWeight: 500, cursor: 'pointer' }}
+                    >Save</button>
+                    <button
+                      onClick={() => setCustomDateId(null)}
+                      style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: '8px', padding: '6px 12px', color: 'var(--text3)', fontSize: '0.82rem', cursor: 'pointer' }}
+                    >Cancel</button>
+                  </div>
+                )}
               </div>
             )
           })}

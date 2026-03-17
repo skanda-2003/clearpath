@@ -15,8 +15,22 @@ function dateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
+function getWeekStart(dk: string): string {
+  const d = new Date(dk + 'T00:00:00')
+  d.setDate(d.getDate() - d.getDay())
+  return dateKey(d)
+}
+
+function formatWeekRange(weekStartKey: string): string {
+  const start = new Date(weekStartKey + 'T00:00:00')
+  const end = new Date(start)
+  end.setDate(end.getDate() + 6)
+  return `${MONTHS[start.getMonth()]} ${start.getDate()} — ${MONTHS[end.getMonth()]} ${end.getDate()}`
+}
+
 type Task = { id: string; text: string; done: boolean; date: string; priority: string }
-type JournalEntry = { date: string; wins: string; tasks_reflection: string; time_reflection: string; improve: string }
+type JournalEntry = { date: string; wins: string | null; tasks_reflection: string | null; time_reflection: string | null; improve: string | null; quick_entry: string | null }
+type WeeklyReview = { week_start: string; went_well: string; didnt_go_well: string; focus_next_week: string }
 
 function PriorityBadge({ priority }: { priority: string }) {
   return (
@@ -39,6 +53,7 @@ export default function CalendarView({ user }: { user: User }) {
   const [selectedDate, setSelectedDate] = useState<string | null>(todayKey)
   const [tasks, setTasks] = useState<Task[]>([])
   const [journals, setJournals] = useState<JournalEntry[]>([])
+  const [weeklyReviews, setWeeklyReviews] = useState<WeeklyReview[]>([])
   const [loading, setLoading] = useState(true)
 
   const monthStart = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1)
@@ -46,14 +61,24 @@ export default function CalendarView({ user }: { user: User }) {
   const monthStartKey = dateKey(monthStart)
   const monthEndKey = dateKey(monthEnd)
 
+  // Get week start and end for the selected date to fetch weekly review
+  const selectedWeekStart = selectedDate ? getWeekStart(selectedDate) : null
+  const selectedWeekEnd = selectedWeekStart ? (() => {
+    const d = new Date(selectedWeekStart + 'T00:00:00')
+    d.setDate(d.getDate() + 6)
+    return dateKey(d)
+  })() : null
+
   const fetchData = useCallback(async () => {
     setLoading(true)
-    const [t, j] = await Promise.all([
+    const [t, j, wr] = await Promise.all([
       supabase.from('week_tasks').select('*').eq('user_id', user.id).gte('date', monthStartKey).lte('date', monthEndKey),
       supabase.from('journal_entries').select('*').eq('user_id', user.id).gte('date', monthStartKey).lte('date', monthEndKey),
+      supabase.from('weekly_reviews').select('*').eq('user_id', user.id).gte('week_start', monthStartKey).lte('week_start', monthEndKey),
     ])
     setTasks(t.data || [])
     setJournals(j.data || [])
+    setWeeklyReviews(wr.data || [])
     setLoading(false)
   }, [user.id, monthStartKey, monthEndKey, supabase])
 
@@ -79,6 +104,7 @@ export default function CalendarView({ user }: { user: User }) {
 
   const selectedTasks = selectedDate ? tasks.filter(t => t.date === selectedDate) : []
   const selectedJournal = selectedDate ? journals.find(j => j.date === selectedDate) : null
+  const selectedWeeklyReview = selectedWeekStart ? weeklyReviews.find(wr => wr.week_start === selectedWeekStart) : null
   const selectedDateObj = selectedDate ? new Date(selectedDate + 'T00:00:00') : null
   const doneTasks = selectedTasks.filter(t => t.done).length
 
@@ -143,11 +169,9 @@ export default function CalendarView({ user }: { user: User }) {
               }}>{day.getDate()}</span>
 
               {dayTasks.length > 0 && (
-                <div style={{ display: 'flex', gap: '2px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                  <span style={{ fontSize: '0.65rem', color: allDone ? 'var(--green)' : 'var(--text3)' }}>
-                    {doneTasks === dayTasks.length && isSelected ? '' : `${dayTasks.filter(t=>t.done).length}/${dayTasks.length}`}
-                  </span>
-                </div>
+                <span style={{ fontSize: '0.65rem', color: allDone ? 'var(--green)' : 'var(--text3)' }}>
+                  {dayTasks.filter(t => t.done).length}/{dayTasks.length}
+                </span>
               )}
 
               <div style={{ display: 'flex', gap: '3px', marginTop: 'auto' }}>
@@ -220,9 +244,15 @@ export default function CalendarView({ user }: { user: User }) {
 
           {/* Journal */}
           {selectedJournal ? (
-            <div style={{ padding: '12px 18px' }}>
+            <div style={{ padding: '12px 18px', borderBottom: selectedWeeklyReview ? '1px solid var(--border)' : 'none' }}>
               <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '12px', fontFamily: 'var(--font-syne)' }}>Journal entry</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {selectedJournal.quick_entry && (
+                  <div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text3)', marginBottom: '4px', fontWeight: 500 }}>Quick entry</div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text2)', lineHeight: 1.6 }}>{selectedJournal.quick_entry}</div>
+                  </div>
+                )}
                 {[
                   { key: 'wins', label: 'Accomplished' },
                   { key: 'tasks_reflection', label: 'Tasks reflection' },
@@ -241,8 +271,33 @@ export default function CalendarView({ user }: { user: User }) {
               </div>
             </div>
           ) : (
-            <div style={{ padding: '16px 18px', textAlign: 'center', color: 'var(--text3)', fontSize: '0.82rem' }}>
+            <div style={{ padding: '16px 18px', textAlign: 'center', color: 'var(--text3)', fontSize: '0.82rem', borderBottom: selectedWeeklyReview ? '1px solid var(--border)' : 'none' }}>
               No journal entry for this day
+            </div>
+          )}
+
+          {/* Weekly Review */}
+          {selectedWeeklyReview && (
+            <div style={{ padding: '12px 18px' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '12px', fontFamily: 'var(--font-syne)' }}>
+                Weekly review — {selectedWeekStart ? formatWeekRange(selectedWeekStart) : ''}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {[
+                  { key: 'went_well', label: 'What went well' },
+                  { key: 'didnt_go_well', label: "What didn't go well" },
+                  { key: 'focus_next_week', label: 'Focus next week' },
+                ].map(({ key, label }) => {
+                  const val = selectedWeeklyReview[key as keyof WeeklyReview]
+                  if (!val) return null
+                  return (
+                    <div key={key}>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text3)', marginBottom: '4px', fontWeight: 500 }}>{label}</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text2)', lineHeight: 1.6 }}>{val}</div>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           )}
         </div>
